@@ -2,7 +2,8 @@
  * Invoice API Types and Services
  */
 
-import { apiClient, ApiResponse } from './client';
+import { apiClient, ApiResponse, DEMO_MODE, demoDelay } from './client';
+import { resolveDemo } from './demoData';
 
 // ============ Types ============
 
@@ -120,6 +121,14 @@ export async function calculateInvoice(
 export async function generateInvoiceXml(
     invoice: InvoiceCreate
 ): Promise<ApiResponse<string>> {
+    if (DEMO_MODE) {
+        await demoDelay();
+        return {
+            data: resolveDemo('POST', '/invoices/generate-xml', invoice) as string,
+            error: null,
+            success: true,
+        };
+    }
     const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/invoices/generate-xml`,
         {

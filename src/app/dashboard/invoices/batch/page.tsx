@@ -274,19 +274,21 @@ export default function BatchUploadPage() {
                 } else {
                     // Handle error message - could be string or object
                     let errorMsg = "Failed to sign invoice";
-                    if (signResponse.error?.detail) {
-                        if (typeof signResponse.error.detail === "string") {
-                            errorMsg = translateError(signResponse.error.detail);
-                        } else if (Array.isArray(signResponse.error.detail)) {
-                            errorMsg = signResponse.error.detail.map((e: any) => {
+                    const detail: unknown = signResponse.error?.detail;
+                    const errObj = signResponse.error as { message?: string } | null;
+                    if (detail) {
+                        if (typeof detail === "string") {
+                            errorMsg = translateError(detail);
+                        } else if (Array.isArray(detail)) {
+                            errorMsg = detail.map((e: any) => {
                                 const msg = e.msg || e.message || JSON.stringify(e);
                                 return translateError(msg);
                             }).join(", ");
                         } else {
-                            errorMsg = translateError(JSON.stringify(signResponse.error.detail));
+                            errorMsg = translateError(JSON.stringify(detail));
                         }
-                    } else if (signResponse.error?.message) {
-                        errorMsg = translateError(signResponse.error.message);
+                    } else if (errObj?.message) {
+                        errorMsg = translateError(errObj.message);
                     }
                     results.push({
                         success: false,

@@ -21,6 +21,7 @@ import { ComplianceCard } from "@/components/invoices/ComplianceCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { getInvoiceById as getMockInvoiceById } from "@/lib/mockData/invoices";
+import { DEMO_MODE } from "@/lib/api/client";
 
 // API base URL
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -64,6 +65,13 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     useEffect(() => {
         async function fetchInvoice() {
             setLoading(true);
+            // Demo mode: skip the (unreachable) backend and render directly
+            // from the rich mock invoice resolved by id.
+            if (DEMO_MODE) {
+                setInvoice(null);
+                setLoading(false);
+                return;
+            }
             try {
                 // Try fetching by UUID first, then by ID
                 const response = await fetch(`${API_BASE}/invoices/${id}`);
@@ -309,8 +317,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
                     {/* Right Column - Compliance Details */}
                     <ComplianceCard
-                        clearanceUuid={clearanceUuid}
-                        invoiceHash={invoiceHash}
+                        clearanceUuid={clearanceUuid ?? undefined}
+                        invoiceHash={invoiceHash ?? undefined}
                         submittedAt={submittedAt}
                         validationLog={validationLog}
                     />

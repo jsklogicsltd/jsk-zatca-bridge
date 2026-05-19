@@ -4,7 +4,8 @@
  * API client for batch Excel/CSV upload and PDF invoice parsing.
  */
 
-import { apiClient, type ApiResponse } from "./client";
+import { apiClient, type ApiResponse, DEMO_MODE, demoDelay } from "./client";
+import { resolveDemo } from "./demoData";
 
 // Types
 export interface LineItemData {
@@ -75,6 +76,14 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
  * Upload Excel or CSV file for batch invoice processing.
  */
 export async function uploadBatchFile(file: File): Promise<ApiResponse<BatchUploadResponse>> {
+    if (DEMO_MODE) {
+        await demoDelay(900);
+        return {
+            success: true,
+            data: resolveDemo("POST", "/upload/batch") as BatchUploadResponse,
+            error: null,
+        };
+    }
     try {
         const formData = new FormData();
         formData.append("file", file);
@@ -118,6 +127,14 @@ export async function uploadBatchFile(file: File): Promise<ApiResponse<BatchUplo
  * Upload PDF invoice for automatic data extraction.
  */
 export async function uploadPdfInvoice(file: File): Promise<ApiResponse<PDFUploadResponse>> {
+    if (DEMO_MODE) {
+        await demoDelay(900);
+        return {
+            success: true,
+            data: resolveDemo("POST", "/upload/pdf") as PDFUploadResponse,
+            error: null,
+        };
+    }
     try {
         const formData = new FormData();
         formData.append("file", file);

@@ -7,6 +7,7 @@ import { InvoiceFilters } from "@/components/invoices/InvoiceFilters";
 import { InvoiceTable } from "@/components/invoices/InvoiceTable";
 import { mockInvoices, type InvoiceStatus } from "@/lib/mockData/invoices";
 import { useInvoiceList } from "@/lib/hooks/useApi";
+import { DEMO_MODE } from "@/lib/api/client";
 import { Loader2 } from "lucide-react";
 
 export default function InvoicesPage() {
@@ -32,6 +33,10 @@ export default function InvoicesPage() {
     const [isUsingApi, setIsUsingApi] = useState(false);
 
     useEffect(() => {
+        // Demo mode: keep the rich, fully-populated mock invoices (real
+        // customer names, amounts and ids that resolve on the detail page)
+        // instead of the sparse API/demo-resolver shape.
+        if (DEMO_MODE) return;
         if (apiData && apiData.invoices) {
             // Transform API response to frontend format matching Invoice interface
             const transformedInvoices = apiData.invoices.map((inv) => ({
