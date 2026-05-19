@@ -1,0 +1,35 @@
+{
+    "invoice_type": "Simplified",
+    "invoice_number": "TEST-INTEGRATION-001",
+    "issue_date": "2026-01-29",
+    "supplier": {
+        "trn": "310122393500003",
+        "name": "Integration Test Company",
+        "street": "Test Street",
+        "building_number": "1111",
+        "city": "Riyadh",
+        "district": "Test District",
+        "postal_code": "11111",
+        "country_code": "SA"
+    },
+    "customer": {
+        "trn": "300122393500003",
+        "name": "Test Customer",
+        "street": "Customer Street",
+        "building_number": "2222",
+        "city": "Jeddah",
+        "district": "Customer District",
+        "postal_code": "22222",
+        "country_code": "SA"
+    },
+    "line_items": [
+        {
+            "name": "Integration Test Item",
+            "quantity": 1,
+            "price": 100.00,
+            "vat_rate": 15,
+            "tax_code": "S"
+        }
+    ],
+    "currency_code": "SAR"
+}

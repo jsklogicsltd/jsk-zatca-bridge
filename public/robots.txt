@@ -1,0 +1,21 @@
+# User-agent: *
+Allow: /
+
+# Disallow admin and auth pages
+Disallow: /admin
+Disallow: /auth/
+Disallow: /api/
+
+# Disallow user-specific pages
+Disallow: /dashboard/
+Disallow: /onboarding/
+Disallow: /settings/
+
+# Allow public pages
+Allow: /
+Allow: /docs
+Allow: /pricing
+Allow: /about
+
+# Sitemap
+Sitemap: https://zatcabridge.com/sitemap.xml

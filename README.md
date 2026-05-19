@@ -1,36 +1,150 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ZATCA Bridge
 
-## Getting Started
+**Enterprise-grade ZATCA e-invoicing compliance platform for Saudi Arabia**
 
-First, run the development server:
+ZATCA Bridge simplifies tax compliance by providing a modern, intuitive platform for submitting, validating, and managing electronic invoices in accordance with Saudi Arabian tax authority (ZATCA) requirements.
+
+---
+
+## 🚀 Features
+
+- **✅ ZATCA Compliance**: Full compliance with Saudi Arabia's e-invoicing (Fatoora) regulations
+- **📊 Dashboard**: Real-time overview of invoice status, compliance metrics, and system health
+- **🔐 Secure Authentication**: Enterprise-grade security with session management
+- **📱 Fully Responsive**: Optimized for desktop, tablet, and mobile devices
+- **♿ Accessible**: WCAG AA compliant with keyboard navigation and screen reader support
+- **🎨 Modern Design**: Premium UI with smooth animations and contemporary aesthetics
+- **🔍 Advanced Search**: Quick invoice and customer lookup
+- **📈 Analytics**: Detailed reporting and compliance tracking
+- **🧪 Validation**: Real-time XML validation and error detection
+
+---
+
+## 🛠 Technology Stack
+
+**Frontend Framework**:
+- [Next.js 14+](https://nextjs.org/) - React framework with App Router
+- [TypeScript](https://www.typescriptlang.org/) - Type safety
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
+
+**UI Components**:
+- [Shadcn UI](https://ui.shadcn.com/) - Re-usable component library
+- [Lucide React](https://lucide.dev/) - Icon library
+- [Framer Motion](https://www.framer.com/motion/) - Animation library
+
+**Form Handling**:
+- [React Hook Form](https://react-hook-form.com/) - Form validation
+- [Zod](https://zod.dev/) - Schema validation
+
+---
+
+## 📋 Prerequisites
+
+- **Node.js**: v18.17 or higher
+- **npm**: v9 or higher (or yarn/pnpm)
+- **Git**: For version control
+
+---
+
+## 🏁 Getting Started
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/your-org/jsk-logics-zatca-bridge.git
+cd jsk-logics-zatca-bridge
+```
+
+### 2. Install Dependencies
+
+```bash
+npm install
+```
+
+### 3. Environment Setup
+
+Copy the example environment file:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Edit `.env.local` with your configuration. See `.env.local.example` for all available variables.
+
+### 4. Run Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 📦 Available Scripts
 
-## Learn More
+```bash
+npm run dev          # Start development server
+npm run build        # Build for production
+npm run start        # Start production server
+npm run lint         # Run ESLint
+```
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 📁 Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/
+├── app/                    # Next.js App Router pages
+│   ├── auth/              # Authentication pages
+│   ├── dashboard/         # Dashboard and main app
+│   ├── onboarding/        # User onboarding flow
+│   ├── error.tsx          # Global error boundary
+│   └── not-found.tsx      # 404 page
+├── components/            # React components
+│   ├── ui/               # Base UI components
+│   ├── auth/             # Authentication components
+│   ├── dashboard/        # Dashboard components
+│   └── layout/           # Layout components
+├── lib/                  # Utility libraries
+│   └── utils.ts         # General utilities
+└── styles/              # Global styles
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🚀 Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment instructions.
+
+### Deploy to Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
+
+---
+
+## ♿ Accessibility
+
+ZATCA Bridge meets WCAG 2.1 AA standards:
+- ✅ Keyboard navigation
+- ✅ Screen reader support
+- ✅ Color contrast compliance
+- ✅ Focus indicators
+
+---
+
+## 📄 License
+
+Copyright © 2026 JSK Logics Ltd. All rights reserved.
+
+---
+
+## 🤝 Support
+
+- **Email**: support@zatcabridge.com
+- **Documentation**: [docs.zatcabridge.com](https://docs.zatcabridge.com)
+
+---
+
+**Built with ❤️ by JSK Logics Ltd**

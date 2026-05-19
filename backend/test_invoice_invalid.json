@@ -1,0 +1,35 @@
+{
+    "invoice_type": "Tax",
+    "invoice_number": "INV-2026-002",
+    "issue_date": "2026-01-29",
+    "supplier": {
+        "trn": "12345",
+        "name": "ABC Trading",
+        "street": "King Fahd Road",
+        "building_number": "12",
+        "city": "Riyadh",
+        "district": "Al Olaya",
+        "postal_code": "12211"
+    },
+    "customer": {
+        "trn": "300122393500003",
+        "name": "XYZ Corp",
+        "street": "Prince Road",
+        "building_number": "5678",
+        "city": "Jeddah",
+        "district": "Al Hamra",
+        "postal_code": "23212"
+    },
+    "line_items": [
+        {
+            "name": "Laptop",
+            "quantity": 1,
+            "price": 1000.00,
+            "vat_rate": 15,
+            "tax_code": "S"
+        }
+    ],
+    "total_excluding_vat": 1000.00,
+    "total_vat": 200.00,
+    "total_including_vat": 1200.00
+}

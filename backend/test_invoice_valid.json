@@ -1,0 +1,47 @@
+{
+    "invoice_type": "Tax",
+    "invoice_number": "INV-2026-001",
+    "issue_date": "2026-01-29",
+    "supplier": {
+        "trn": "310122393500003",
+        "name": "ABC Trading Company",
+        "street": "King Fahd Road",
+        "building_number": "1234",
+        "city": "Riyadh",
+        "district": "Al Olaya",
+        "postal_code": "12211",
+        "country_code": "SA"
+    },
+    "customer": {
+        "trn": "300122393500003",
+        "name": "XYZ Corporation",
+        "street": "Prince Mohammed Bin Salman Road",
+        "building_number": "5678",
+        "city": "Jeddah",
+        "district": "Al Hamra",
+        "postal_code": "23212",
+        "country_code": "SA"
+    },
+    "line_items": [
+        {
+            "name": "Laptop Computer",
+            "quantity": 2,
+            "price": 5000.00,
+            "vat_rate": 15,
+            "tax_code": "S",
+            "discount": 0
+        },
+        {
+            "name": "Wireless Mouse",
+            "quantity": 2,
+            "price": 150.00,
+            "vat_rate": 15,
+            "tax_code": "S",
+            "discount": 0
+        }
+    ],
+    "total_excluding_vat": 10300.00,
+    "total_vat": 1545.00,
+    "total_including_vat": 11845.00,
+    "currency_code": "SAR"
+}
