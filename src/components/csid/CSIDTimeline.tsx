@@ -41,6 +41,12 @@ export function CSIDTimeline({ records }: CSIDTimelineProps) {
                 </CardTitle>
             </CardHeader>
             <CardContent>
+                {records.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-slate-500">
+                        No certificate history yet. Past CSID issuances and renewals will
+                        appear here.
+                    </div>
+                ) : (
                 <div className="relative">
                     {/* Timeline Line */}
                     <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-slate-200" />
@@ -133,6 +139,7 @@ export function CSIDTimeline({ records }: CSIDTimelineProps) {
                         })}
                     </div>
                 </div>
+                )}
             </CardContent>
         </Card>
     );

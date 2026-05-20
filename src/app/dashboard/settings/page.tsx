@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Building2,
@@ -27,13 +27,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import {
-    companySettings,
     invoiceDefaults,
     notificationPrefs,
     apiSettings,
     activeSessions,
-    webhookLogs,
 } from "@/lib/mockData/csid";
+import { useCurrentUser } from "@/lib/hooks/useApi";
+import { updateProfile, changePassword } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const tabs = [
@@ -49,6 +49,27 @@ export default function SettingsPage() {
     const [showApiKey, setShowApiKey] = useState(false);
     const [copied, setCopied] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [saveMessage, setSaveMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+    // Real user, used as the source of truth for the Company Profile tab.
+    const { data: user, refetch: refetchUser } = useCurrentUser();
+    const [legalName, setLegalName] = useState("");
+    const [phone, setPhone] = useState("");
+    const [fullName, setFullName] = useState("");
+
+    useEffect(() => {
+        if (!user) return;
+        setLegalName(user.company_name ?? "");
+        setPhone(user.phone ?? "");
+        setFullName(user.full_name ?? "");
+    }, [user]);
+
+    // Password form state (Security tab).
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmNewPassword, setConfirmNewPassword] = useState("");
+    const [passwordUpdating, setPasswordUpdating] = useState(false);
+    const [passwordMessage, setPasswordMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
     const handleCopy = async (text: string) => {
         await navigator.clipboard.writeText(text);
@@ -58,8 +79,58 @@ export default function SettingsPage() {
 
     const handleSave = async () => {
         setSaving(true);
-        await new Promise((r) => setTimeout(r, 1000));
+        setSaveMessage(null);
+
+        if (activeTab === "company") {
+            const resp = await updateProfile({
+                full_name: fullName.trim() || undefined,
+                company_name: legalName.trim() || undefined,
+                phone: phone.trim() || undefined,
+            });
+            if (resp.success) {
+                setSaveMessage({ kind: "ok", text: "Company profile saved." });
+                refetchUser();
+            } else {
+                setSaveMessage({
+                    kind: "err",
+                    text: resp.error?.detail ?? "Failed to save profile.",
+                });
+            }
+        } else {
+            // Other tabs aren't persisted yet — communicate this honestly.
+            setSaveMessage({
+                kind: "ok",
+                text: "Saved locally (server persistence for this section is coming soon).",
+            });
+        }
+
         setSaving(false);
+    };
+
+    const handlePasswordUpdate = async () => {
+        setPasswordMessage(null);
+        if (!newPassword || newPassword !== confirmNewPassword) {
+            setPasswordMessage({ kind: "err", text: "New passwords do not match." });
+            return;
+        }
+        setPasswordUpdating(true);
+        const resp = await changePassword({
+            current_password: currentPassword,
+            new_password: newPassword,
+            confirm_password: confirmNewPassword,
+        });
+        setPasswordUpdating(false);
+        if (resp.success) {
+            setPasswordMessage({ kind: "ok", text: "Password updated." });
+            setCurrentPassword("");
+            setNewPassword("");
+            setConfirmNewPassword("");
+        } else {
+            setPasswordMessage({
+                kind: "err",
+                text: resp.error?.detail ?? "Failed to update password.",
+            });
+        }
     };
 
     const maskApiKey = (key: string) => {
@@ -124,53 +195,67 @@ export default function SettingsPage() {
                                         <CardContent className="space-y-6">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
-                                                    <Label>Legal Name</Label>
-                                                    <Input defaultValue={companySettings.legalName} className="mt-1" />
+                                                    <Label htmlFor="company-name">Legal Name</Label>
+                                                    <Input
+                                                        id="company-name"
+                                                        value={legalName}
+                                                        onChange={(e) => setLegalName(e.target.value)}
+                                                        placeholder="Your company's registered name"
+                                                        className="mt-1"
+                                                    />
                                                 </div>
                                                 <div>
-                                                    <Label>Commercial Registration</Label>
-                                                    <Input defaultValue={companySettings.commercialRegNumber} className="mt-1" />
+                                                    <Label htmlFor="full-name">Primary Contact Name</Label>
+                                                    <Input
+                                                        id="full-name"
+                                                        value={fullName}
+                                                        onChange={(e) => setFullName(e.target.value)}
+                                                        placeholder="Full name"
+                                                        className="mt-1"
+                                                    />
                                                 </div>
                                                 <div>
-                                                    <Label>VAT Number</Label>
-                                                    <Input defaultValue={companySettings.vatNumber} disabled className="mt-1 bg-slate-100" />
+                                                    <Label htmlFor="vat-number">VAT Number</Label>
+                                                    <Input
+                                                        id="vat-number"
+                                                        value={user?.tax_id ?? ""}
+                                                        disabled
+                                                        className="mt-1 bg-slate-100"
+                                                    />
                                                     <p className="text-xs text-slate-500 mt-1">Locked after verification</p>
                                                 </div>
                                                 <div>
-                                                    <Label>Contact Email</Label>
-                                                    <Input defaultValue={companySettings.email} className="mt-1" />
+                                                    <Label htmlFor="contact-email">Contact Email</Label>
+                                                    <Input
+                                                        id="contact-email"
+                                                        value={user?.email ?? ""}
+                                                        disabled
+                                                        className="mt-1 bg-slate-100"
+                                                    />
+                                                    <p className="text-xs text-slate-500 mt-1">Change via account settings</p>
                                                 </div>
                                                 <div>
-                                                    <Label>Phone</Label>
-                                                    <Input defaultValue={companySettings.phone} className="mt-1" />
+                                                    <Label htmlFor="phone">Phone</Label>
+                                                    <Input
+                                                        id="phone"
+                                                        value={phone}
+                                                        onChange={(e) => setPhone(e.target.value)}
+                                                        placeholder="+966 ..."
+                                                        className="mt-1"
+                                                    />
                                                 </div>
                                             </div>
 
-                                            <div>
-                                                <Label>Street Address</Label>
-                                                <Input defaultValue={companySettings.address.street} className="mt-1" />
-                                            </div>
-
-                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                                <div>
-                                                    <Label>City</Label>
-                                                    <Input defaultValue={companySettings.address.city} className="mt-1" />
-                                                </div>
-                                                <div>
-                                                    <Label>Postal Code</Label>
-                                                    <Input defaultValue={companySettings.address.postalCode} className="mt-1" />
-                                                </div>
-                                                <div>
-                                                    <Label>Country</Label>
-                                                    <Input defaultValue={companySettings.address.country} className="mt-1" />
-                                                </div>
+                                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                                                Address and company logo persistence is rolling out next.
+                                                Save now to capture your legal name, contact, and phone — they're stored on your profile.
                                             </div>
 
                                             <div>
                                                 <Label>Company Logo</Label>
-                                                <div className="mt-2 border-2 border-dashed border-slate-300 rounded-lg p-6 text-center">
+                                                <div className="mt-2 border-2 border-dashed border-slate-300 rounded-lg p-6 text-center opacity-60">
                                                     <Upload size={24} className="text-slate-400 mx-auto mb-2" />
-                                                    <p className="text-sm text-slate-500">Drag and drop or click to upload</p>
+                                                    <p className="text-sm text-slate-500">Logo upload coming soon</p>
                                                 </div>
                                             </div>
                                         </CardContent>
@@ -414,18 +499,69 @@ export default function SettingsPage() {
                                         </CardHeader>
                                         <CardContent className="space-y-4">
                                             <div>
-                                                <Label>Current Password</Label>
-                                                <Input type="password" className="mt-1" />
+                                                <Label htmlFor="current-password">Current Password</Label>
+                                                <Input
+                                                    id="current-password"
+                                                    type="password"
+                                                    value={currentPassword}
+                                                    onChange={(e) => setCurrentPassword(e.target.value)}
+                                                    autoComplete="current-password"
+                                                    className="mt-1"
+                                                />
                                             </div>
                                             <div>
-                                                <Label>New Password</Label>
-                                                <Input type="password" className="mt-1" />
+                                                <Label htmlFor="new-password">New Password</Label>
+                                                <Input
+                                                    id="new-password"
+                                                    type="password"
+                                                    value={newPassword}
+                                                    onChange={(e) => setNewPassword(e.target.value)}
+                                                    autoComplete="new-password"
+                                                    className="mt-1"
+                                                />
                                             </div>
                                             <div>
-                                                <Label>Confirm New Password</Label>
-                                                <Input type="password" className="mt-1" />
+                                                <Label htmlFor="confirm-new-password">Confirm New Password</Label>
+                                                <Input
+                                                    id="confirm-new-password"
+                                                    type="password"
+                                                    value={confirmNewPassword}
+                                                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                                    autoComplete="new-password"
+                                                    className="mt-1"
+                                                />
                                             </div>
-                                            <Button>Update Password</Button>
+
+                                            {passwordMessage && (
+                                                <div
+                                                    className={cn(
+                                                        "text-xs px-3 py-2 rounded",
+                                                        passwordMessage.kind === "ok"
+                                                            ? "bg-green-100 text-green-800"
+                                                            : "bg-red-100 text-red-800"
+                                                    )}
+                                                >
+                                                    {passwordMessage.text}
+                                                </div>
+                                            )}
+
+                                            <Button
+                                                onClick={handlePasswordUpdate}
+                                                disabled={
+                                                    passwordUpdating ||
+                                                    !newPassword ||
+                                                    !confirmNewPassword
+                                                }
+                                            >
+                                                {passwordUpdating ? (
+                                                    <>
+                                                        <Loader2 size={16} className="mr-2 animate-spin" />
+                                                        Updating…
+                                                    </>
+                                                ) : (
+                                                    "Update Password"
+                                                )}
+                                            </Button>
                                         </CardContent>
                                     </Card>
                                 </motion.div>
@@ -434,7 +570,19 @@ export default function SettingsPage() {
 
                         {/* Save Button */}
                         <div className="sticky bottom-0 bg-stone-50 py-4 border-t border-slate-200 mt-6 -mx-6 px-6">
-                            <div className="flex justify-end">
+                            <div className="flex items-center justify-end gap-3">
+                                {saveMessage && (
+                                    <span
+                                        className={cn(
+                                            "text-xs px-3 py-1.5 rounded",
+                                            saveMessage.kind === "ok"
+                                                ? "bg-green-100 text-green-800"
+                                                : "bg-red-100 text-red-800"
+                                        )}
+                                    >
+                                        {saveMessage.text}
+                                    </span>
+                                )}
                                 <Button
                                     onClick={handleSave}
                                     disabled={saving}

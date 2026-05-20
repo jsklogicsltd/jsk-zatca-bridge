@@ -14,6 +14,9 @@ import {
     zatcaOnboard,
     getCSIDStatus,
     getHealthStatus,
+    getCurrentUser,
+    getZatcaHealth,
+    getZatcaCredentialsStatus,
     type DashboardStats,
     type InvoiceListResponse,
     type InvoiceResponse,
@@ -22,6 +25,8 @@ import {
     type OnboardRequest,
     type OnboardResponse,
     type CSIDStatusResponse,
+    type CredentialsStatus,
+    type User,
 } from '../api';
 
 // ============ Generic Fetch Hook ============
@@ -75,6 +80,18 @@ export function useDashboardStats(startDate?: string, endDate?: string) {
 
 export function useHealthStatus() {
     return useFetch(() => getHealthStatus(), []);
+}
+
+export function useCurrentUser() {
+    return useFetch<User>(() => getCurrentUser(), []);
+}
+
+export function useZatcaHealth() {
+    return useFetch<{ status: string; message: string }>(() => getZatcaHealth(), []);
+}
+
+export function useZatcaCredentialsStatus() {
+    return useFetch<CredentialsStatus>(() => getZatcaCredentialsStatus(), []);
 }
 
 // ============ Invoice Hooks ============

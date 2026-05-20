@@ -21,7 +21,8 @@ import {
     ChevronDown,
 } from "lucide-react";
 import { useDashboard } from "./DashboardLayout";
-import { currentUser, navigationItems } from "@/lib/mockData";
+import { navigationItems } from "@/lib/mockData";
+import { useCurrentUser } from "@/lib/hooks/useApi";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -44,8 +45,14 @@ export function Sidebar() {
     const { sidebarCollapsed, setSidebarCollapsed, mobileSidebarOpen, setMobileSidebarOpen } = useDashboard();
     const [userMenuOpen, setUserMenuOpen] = useState(false);
     const [signingOut, setSigningOut] = useState(false);
+    const { data: user } = useCurrentUser();
 
     const isActive = (href: string) => pathname === href;
+
+    const displayName = user?.full_name?.trim() || user?.email?.split("@")[0] || "Account";
+    const displayCompany = user?.company_name?.trim() || "Your company";
+    const displayRole = user?.is_verified ? "Admin" : "Pending verification";
+    const complianceStatus: "compliant" | "warning" = user?.has_zatca_csid ? "compliant" : "warning";
 
     const handleSignOut = async () => {
         if (signingOut) return;
@@ -105,14 +112,13 @@ export function Sidebar() {
                     </div>
                     {!sidebarCollapsed && (
                         <div>
-                            <p className="font-bold text-slate-900 text-sm">{currentUser.company}</p>
+                            <p className="font-bold text-slate-900 text-sm">{displayCompany}</p>
                             <span className={cn(
                                 "text-xs px-1.5 py-0.5 rounded-full",
-                                currentUser.complianceStatus === "compliant" && "bg-green-100 text-green-700",
-                                currentUser.complianceStatus === "warning" && "bg-amber-100 text-amber-700",
-                                currentUser.complianceStatus === "critical" && "bg-red-100 text-red-700"
+                                complianceStatus === "compliant" && "bg-green-100 text-green-700",
+                                complianceStatus === "warning" && "bg-amber-100 text-amber-700"
                             )}>
-                                {currentUser.complianceStatus === "compliant" ? "Compliant" : "Attention"}
+                                {complianceStatus === "compliant" ? "Compliant" : "Attention"}
                             </span>
                         </div>
                     )}
@@ -139,8 +145,8 @@ export function Sidebar() {
                         {!sidebarCollapsed && (
                             <>
                                 <div className="flex-1 text-left">
-                                    <p className="text-sm font-medium text-slate-900">{currentUser.name}</p>
-                                    <p className="text-xs text-slate-500">{currentUser.role}</p>
+                                    <p className="text-sm font-medium text-slate-900">{displayName}</p>
+                                    <p className="text-xs text-slate-500">{displayRole}</p>
                                 </div>
                                 <ChevronDown size={16} className={cn("text-slate-400 transition-transform", userMenuOpen && "rotate-180")} />
                             </>

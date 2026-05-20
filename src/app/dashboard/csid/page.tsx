@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { currentCSID, csidHistory, getDaysUntilExpiry, getCSIDStatusFromExpiry } from "@/lib/mockData/csid";
+import type { CSIDStatus, CSIDRecord } from "@/lib/mockData/csid";
 import { cn } from "@/lib/utils";
 import {
     setZatcaCredentials,
@@ -32,18 +32,10 @@ import {
     type CredentialsStatus,
 } from "@/lib/api";
 
-function formatDate(date: Date) {
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function maskSerial(serial: string) {
-    return serial.slice(0, 10) + "••••••" + serial.slice(-4);
-}
-
 export default function CSIDPage() {
     const [isRenewalOpen, setIsRenewalOpen] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [environment, setEnvironment] = useState<"sandbox" | "production">(currentCSID.environment);
+    const [environment, setEnvironment] = useState<"sandbox" | "production">("sandbox");
 
     // Real ZATCA credential management (backed by /api/v1/zatca/credentials)
     const [credsStatus, setCredsStatus] = useState<CredentialsStatus | null>(null);
@@ -60,6 +52,11 @@ export default function CSIDPage() {
             setCredsStatus(resp.data);
             if (resp.data.environment) {
                 setCredsEnv(resp.data.environment as "sandbox" | "simulation" | "production");
+                if (resp.data.environment === "production") {
+                    setEnvironment("production");
+                } else {
+                    setEnvironment("sandbox");
+                }
             }
         } else {
             setCredsStatus({ has_csid: false, has_secret: false });
@@ -123,11 +120,18 @@ export default function CSIDPage() {
         }
     };
 
-    const daysRemaining = getDaysUntilExpiry(currentCSID.expiryDate);
-    const status = getCSIDStatusFromExpiry(currentCSID.expiryDate);
+    // Without an `expires_at` field on the backend yet, we infer status from
+    // whether a CSID is configured. has_csid → active, otherwise → expired
+    // (semantically: "action required, configure one to continue").
+    const hasCsid = !!credsStatus?.has_csid;
+    const status: CSIDStatus = (credsStatus === null ? "active" : hasCsid ? "active" : "expired") as CSIDStatus;
+    const daysRemaining: number | undefined = undefined;
+    const csidHistory: CSIDRecord[] = [];
 
     const handleCopy = async () => {
-        await navigator.clipboard.writeText(currentCSID.serialNumber);
+        const value = credsStatus?.csid_preview;
+        if (!value) return;
+        await navigator.clipboard.writeText(value);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -159,47 +163,46 @@ export default function CSIDPage() {
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div>
-                                <p className="text-xs text-slate-500 mb-1">Serial Number</p>
+                                <p className="text-xs text-slate-500 mb-1">CSID</p>
                                 <div className="flex items-center gap-2">
                                     <code className="flex-1 text-sm bg-slate-100 px-3 py-2 rounded font-mono">
-                                        {maskSerial(currentCSID.serialNumber)}
+                                        {credsStatus === null
+                                            ? "Loading…"
+                                            : credsStatus.csid_preview ?? "Not configured"}
                                     </code>
-                                    <Button variant="ghost" size="sm" onClick={handleCopy}>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={handleCopy}
+                                        disabled={!credsStatus?.csid_preview}
+                                    >
                                         {copied ? <CheckCircle size={16} className="text-green-600" /> : <Copy size={16} />}
                                     </Button>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                    <p className="text-slate-500">Issue Date</p>
-                                    <p className="font-medium">{formatDate(currentCSID.issueDate)}</p>
-                                </div>
-                                <div>
-                                    <p className="text-slate-500">Expiry Date</p>
-                                    <p className="font-medium">{formatDate(currentCSID.expiryDate)}</p>
-                                </div>
+                            <div className="text-sm">
+                                <p className="text-slate-500">Environment</p>
+                                <span className={cn(
+                                    "inline-flex mt-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                                    credsStatus?.environment === "production"
+                                        ? "bg-green-100 text-green-700"
+                                        : "bg-amber-100 text-amber-700"
+                                )}>
+                                    {(credsStatus?.environment ?? "sandbox")
+                                        .replace(/^./, (c) => c.toUpperCase())}
+                                </span>
                             </div>
 
                             <div className="text-sm">
                                 <p className="text-slate-500">Issued By</p>
-                                <p className="font-medium">{currentCSID.issuedBy}</p>
+                                <p className="font-medium">ZATCA</p>
                             </div>
 
-                            <div className="text-sm">
-                                <p className="text-slate-500">Valid For</p>
-                                <span className={cn(
-                                    "inline-flex px-2 py-0.5 rounded-full text-xs font-medium",
-                                    environment === "production" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
-                                )}>
-                                    {environment === "production" ? "Production" : "Sandbox"}
-                                </span>
+                            <div className="text-xs text-slate-400 pt-2 border-t border-slate-100">
+                                Issue/expiry tracking will appear here once supported
+                                by the backend. Manage credentials in the panel below.
                             </div>
-
-                            <Button variant="outline" className="w-full gap-2">
-                                <Download size={16} />
-                                Download Certificate (PEM)
-                            </Button>
                         </CardContent>
                     </Card>
 
