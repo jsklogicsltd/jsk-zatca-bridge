@@ -101,7 +101,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
     useEffect(() => {
         if (invoice?.zatca_response && typeof invoice.zatca_response === "object") {
-            setZatcaLog(invoice.zatca_response as ZatcaSubmissionResult);
+            setZatcaLog(invoice.zatca_response as unknown as ZatcaSubmissionResult);
         }
     }, [invoice]);
 

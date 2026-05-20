@@ -383,7 +383,7 @@ export default function OnboardingZATCAPage() {
                                         <span className="text-slate-600">Expires:</span>
                                         <span className="font-medium">{csidData ? formatDate(csidData.expires_at) : "365 days"}</span>
                                     </div>
-                                    {csidData && (
+                                    {csidData?.csid && (
                                         <div className="mt-4 pt-4 border-t border-slate-200">
                                             <p className="text-xs text-slate-500 mb-2">CSID (first 20 chars):</p>
                                             <code className="text-xs bg-slate-100 p-2 rounded block break-all">
