@@ -231,9 +231,8 @@ export default function SignUpPage() {
                         </div>
 
                         {/* Social Signup */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3">
                             <SocialButton provider="google" onClick={() => handleSocialSignup("Google")} />
-                            <SocialButton provider="microsoft" onClick={() => handleSocialSignup("Microsoft")} />
                         </div>
 
                         {/* Sign In Link */}

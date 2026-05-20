@@ -26,7 +26,20 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { mockCustomers } from "@/lib/mockData/invoices";
 import { cn } from "@/lib/utils";
-import { signInvoice, validateXmlWithSdk, type SignedInvoice } from "@/lib/api";
+import {
+    signInvoice,
+    submitToZatca,
+    validateXmlWithSdk,
+    type SignedInvoice,
+    type ZatcaAction,
+} from "@/lib/api";
+import {
+    ZatcaResponseCard,
+    DiagnosticFooter,
+    actionToZatcaEndpoint,
+    type ZatcaDisplayState,
+} from "@/components/invoices/ZatcaResponseCard";
+import { NetworkStatusPill } from "@/components/invoices/NetworkStatusPill";
 
 const steps = [
     { id: 1, label: "Customer", icon: User },
@@ -57,6 +70,9 @@ export default function NewInvoicePage() {
     } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showXml, setShowXml] = useState(false);
+    const [zatcaState, setZatcaState] = useState<ZatcaDisplayState>({ kind: "idle" });
+    const [backendOnline, setBackendOnline] = useState<boolean>(false);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
     // Form state
     const [selectedCustomer, setSelectedCustomer] = useState<string>("");
@@ -151,33 +167,139 @@ export default function NewInvoicePage() {
         };
     };
 
+    const submitToZatcaFlow = async (
+        payload: ReturnType<typeof buildInvoicePayload>,
+        action: ZatcaAction
+    ) => {
+        setZatcaState({ kind: "submitting" });
+        const endpoint = actionToZatcaEndpoint(action, "sandbox");
+
+        try {
+            const zatcaResp = await submitToZatca(payload, action);
+
+            // Backend reachable and returned a body.
+            if (zatcaResp.success && zatcaResp.data) {
+                const data = zatcaResp.data;
+                if (data.status === "CLEARED" || data.status === "REPORTED") {
+                    setZatcaState({ kind: "success", result: data });
+                    return;
+                }
+                if (data.status === "CREDENTIALS_MISSING") {
+                    setZatcaState({
+                        kind: "demo",
+                        reason: "credentials_missing",
+                        result: data,
+                        action,
+                        endpoint: data.attempted_url || endpoint,
+                    });
+                    return;
+                }
+                // Anything else returned by ZATCA → treat as rejection
+                setZatcaState({
+                    kind: "rejected",
+                    reason: "zatca_rejection",
+                    result: data,
+                    errorMessage:
+                        data.message ||
+                        "ZATCA returned a non-success status without a message.",
+                });
+                return;
+            }
+
+            // Backend returned an error envelope
+            if (zatcaResp.error) {
+                const status = zatcaResp.error.status;
+                const detail = zatcaResp.error.detail || "Unknown error";
+                const isNetworkError =
+                    status === 0 ||
+                    /failed to fetch|network ?error|fetch failed/i.test(detail);
+
+                if (isNetworkError) {
+                    setZatcaState({
+                        kind: "demo",
+                        reason: "backend_offline",
+                        result: null,
+                        action,
+                        endpoint,
+                        details: detail,
+                    });
+                    return;
+                }
+                setZatcaState({
+                    kind: "rejected",
+                    reason: "backend_error",
+                    result: null,
+                    errorMessage: detail,
+                    errorCode: status ? `HTTP ${status}` : undefined,
+                });
+                return;
+            }
+
+            // Shouldn't get here, but be safe.
+            setZatcaState({
+                kind: "demo",
+                reason: "backend_offline",
+                result: null,
+                action,
+                endpoint,
+                details: "Backend returned no body.",
+            });
+        } catch (err) {
+            // Belt-and-braces: apiClient swallows fetch errors, but in case
+            // something else throws, classify as backend_offline.
+            const msg = err instanceof Error ? err.message : String(err);
+            setZatcaState({
+                kind: "demo",
+                reason: "backend_offline",
+                result: null,
+                action,
+                endpoint,
+                details: msg,
+            });
+        }
+    };
+
     const handleSubmit = async () => {
         setIsSubmitting(true);
         setError(null);
         setSubmitResult(null);
+        setZatcaState({ kind: "idle" });
 
         try {
             const payload = buildInvoicePayload();
             const response = await signInvoice(payload);
 
-            if (response.success && response.data) {
-                setSignedInvoice(response.data);
-                setSubmitResult("success");
-
-                // Auto-validate with ZATCA SDK
-                setIsValidating(true);
-                const validationResponse = await validateXmlWithSdk(response.data.signed_xml);
-                if (validationResponse.success && validationResponse.data) {
-                    setValidationResult({
-                        valid: validationResponse.data.valid,
-                        summary: validationResponse.data.summary,
-                        errors: validationResponse.data.errors,
-                    });
-                }
-                setIsValidating(false);
-            } else {
+            if (!response.success || !response.data) {
                 setError(response.error?.detail || "Failed to sign invoice");
                 setSubmitResult("error");
+                setIsSubmitting(false);
+                return;
+            }
+
+            setSignedInvoice(response.data);
+            setSubmitResult("success");
+
+            // Step 2: ZATCA SDK validation
+            setIsValidating(true);
+            const validationResponse = await validateXmlWithSdk(response.data.signed_xml);
+            const sdkValid = !!(
+                validationResponse.success &&
+                validationResponse.data &&
+                validationResponse.data.valid
+            );
+            if (validationResponse.success && validationResponse.data) {
+                setValidationResult({
+                    valid: validationResponse.data.valid,
+                    summary: validationResponse.data.summary,
+                    errors: validationResponse.data.errors,
+                });
+            }
+            setIsValidating(false);
+
+            // Step 3: Submit to ZATCA — graceful three-way error classification.
+            if (sdkValid) {
+                const action: ZatcaAction = customerType === "B2B" ? "clear" : "report";
+                await submitToZatcaFlow(payload, action);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Network error");
@@ -185,6 +307,12 @@ export default function NewInvoicePage() {
         }
 
         setIsSubmitting(false);
+    };
+
+    const handleRetryZatca = async () => {
+        const payload = buildInvoicePayload();
+        const action: ZatcaAction = customerType === "B2B" ? "clear" : "report";
+        await submitToZatcaFlow(payload, action);
     };
 
     const canProceed = () => {
@@ -216,6 +344,9 @@ export default function NewInvoicePage() {
                         <ArrowLeft size={16} />
                         Back to Invoices
                     </Link>
+                    <NetworkStatusPill
+                        onChange={(s) => setBackendOnline(s.online)}
+                    />
                 </div>
 
                 <h1 className="text-2xl font-bold text-slate-900">Create New Invoice</h1>
@@ -654,6 +785,36 @@ export default function NewInvoicePage() {
                                         </motion.div>
                                     )}
 
+                                    {/* ZATCA Integration Status — polished, never raw "Failed to fetch" */}
+                                    <ZatcaResponseCard
+                                        state={zatcaState}
+                                        onRetry={handleRetryZatca}
+                                    />
+
+                                    {/* Diagnostic footer — always visible after submit */}
+                                    {zatcaState.kind !== "idle" && (
+                                        <DiagnosticFooter
+                                            backendOnline={backendOnline}
+                                            apiEndpoint={apiBase}
+                                            environment={
+                                                zatcaState.kind === "success"
+                                                    ? zatcaState.result.environment ?? "sandbox"
+                                                    : zatcaState.kind === "demo"
+                                                        ? zatcaState.result?.environment ?? "sandbox"
+                                                        : "sandbox"
+                                            }
+                                            requestId={
+                                                zatcaState.kind === "success"
+                                                    ? zatcaState.result.request_id
+                                                    : zatcaState.kind === "demo"
+                                                        ? zatcaState.result?.request_id
+                                                        : zatcaState.kind === "rejected"
+                                                            ? zatcaState.result?.request_id
+                                                            : undefined
+                                            }
+                                        />
+                                    )}
+
                                     {/* Error Result */}
                                     {submitResult === "error" && (
                                         <motion.div
@@ -728,6 +889,7 @@ export default function NewInvoicePage() {
                                 setSubmitResult(null);
                                 setSignedInvoice(null);
                                 setValidationResult(null);
+                                setZatcaState({ kind: "idle" });
                             } else {
                                 setCurrentStep(currentStep - 1);
                             }

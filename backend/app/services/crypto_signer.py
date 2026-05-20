@@ -2,12 +2,32 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
+from cryptography import x509
+from cryptography.x509.oid import NameOID
 from lxml import etree
 import hashlib
 import base64
 from datetime import datetime
 from typing import Tuple, Optional
 import struct
+
+
+# ZATCA-relevant X.509 attribute / extension OIDs.
+# Reference: https://sandbox.zatca.gov.sa/IntegrationSandbox  (CSR config example)
+OID_SN = x509.ObjectIdentifier("2.5.4.4")                        # surName (used for EGS "SN")
+OID_UID = x509.ObjectIdentifier("0.9.2342.19200300.100.1.1")     # userId (VAT registration number)
+OID_TITLE = x509.ObjectIdentifier("2.5.4.12")                    # title (invoice-type 4-digit code)
+OID_REGISTERED_ADDRESS = x509.ObjectIdentifier("2.5.4.26")       # registeredAddress
+OID_BUSINESS_CATEGORY = x509.ObjectIdentifier("2.5.4.15")        # businessCategory
+OID_MS_TEMPLATE = x509.ObjectIdentifier("1.3.6.1.4.1.311.20.2")  # Microsoft certificate template name
+
+# Sandbox developer-portal expects this template name; production CSIDs use
+# "ZATCA-Code-Signing"; the simulation environment uses "PREZATCA-Code-Signing".
+TEMPLATE_NAMES = {
+    "sandbox": "TSTZATCA-Code-Signing",
+    "simulation": "PREZATCA-Code-Signing",
+    "production": "ZATCA-Code-Signing",
+}
 
 
 class CryptoSigner:
@@ -63,6 +83,112 @@ class CryptoSigner:
         
         return private_pem, public_pem
     
+    def generate_csr(
+        self,
+        common_name: str,
+        organization_name: str,
+        organization_unit_name: str,
+        organization_identifier: str,
+        invoice_type: str = "1100",
+        registered_address: str = "Riyadh",
+        business_category: str = "General",
+        country_code: str = "SA",
+        egs_solution_name: str = "ZATCA-Bridge",
+        egs_model: str = "EGS-1.0",
+        egs_serial: Optional[str] = None,
+        environment: str = "sandbox",
+    ) -> Tuple[str, str, str]:
+        """
+        Generate a ZATCA Phase-2 Compliance CSR with a fresh secp256k1 keypair.
+
+        The CSR carries:
+          - Subject:           C, OU, O, CN
+          - Microsoft template: 1.3.6.1.4.1.311.20.2 = UTF8String:<env-specific name>
+          - subjectAltName:    directoryName with
+              * SN              (surName OID; format "1-<solution>|2-<model>|3-<serial>")
+              * UID             (15-digit VAT registration number)
+              * title           (4-digit invoice type, e.g. 1100 = standard+simplified)
+              * registeredAddress
+              * businessCategory
+
+        Args:
+            common_name:             X.509 CN, e.g. "JSK Logics Trading Est."
+            organization_name:       Legal name of the organisation
+            organization_unit_name:  Department (often "Finance" or branch name)
+            organization_identifier: 15-digit VAT number (TRN)
+            invoice_type:            4-char invoice-type indicator (see ZATCA spec)
+            registered_address:      Free-form address text
+            business_category:       Business category, e.g. "Technology"
+            country_code:            ISO country code (must be "SA" for ZATCA)
+            egs_solution_name:       Name of the e-invoice generation solution
+            egs_model:               Model identifier of the EGS unit
+            egs_serial:              Per-device unique serial (UUID will be generated if None)
+            environment:             sandbox | simulation | production (selects template name)
+
+        Returns:
+            Tuple of (private_key_pem, csr_pem, csr_base64)
+            where csr_base64 is the base64 encoding of the PEM-formatted CSR — the
+            exact form ZATCA's `/compliance` endpoint expects in its `csr` field.
+        """
+        import uuid as _uuid
+
+        if egs_serial is None:
+            egs_serial = str(_uuid.uuid4())
+
+        # 1. secp256k1 keypair (ZATCA requirement; differs from invoice signing
+        #    which historically used SECP256R1 in this codebase).
+        private_key = ec.generate_private_key(ec.SECP256K1(), default_backend())
+
+        # 2. Subject
+        subject = x509.Name([
+            x509.NameAttribute(NameOID.COUNTRY_NAME, country_code),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, organization_unit_name),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, organization_name),
+            x509.NameAttribute(NameOID.COMMON_NAME, common_name),
+        ])
+
+        # 3. directoryName for SAN
+        san_directory = x509.Name([
+            x509.NameAttribute(OID_SN, f"1-{egs_solution_name}|2-{egs_model}|3-{egs_serial}"),
+            x509.NameAttribute(OID_UID, organization_identifier),
+            x509.NameAttribute(OID_TITLE, invoice_type),
+            x509.NameAttribute(OID_REGISTERED_ADDRESS, registered_address),
+            x509.NameAttribute(OID_BUSINESS_CATEGORY, business_category),
+        ])
+
+        # 4. Microsoft cert-template extension carrying ZATCA's template name,
+        #    DER-encoded as an ASN.1 UTF8String.
+        template_name = TEMPLATE_NAMES.get(environment, TEMPLATE_NAMES["sandbox"])
+        template_bytes = template_name.encode("utf-8")
+        utf8_string_der = bytes([0x0C, len(template_bytes)]) + template_bytes
+        template_extension = x509.UnrecognizedExtension(OID_MS_TEMPLATE, utf8_string_der)
+
+        # 5. Build & sign the CSR
+        csr_builder = (
+            x509.CertificateSigningRequestBuilder()
+            .subject_name(subject)
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DirectoryName(san_directory)]),
+                critical=False,
+            )
+            .add_extension(template_extension, critical=False)
+        )
+        csr = csr_builder.sign(private_key, hashes.SHA256(), default_backend())
+
+        # 6. Serialise
+        private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
+        csr_pem = csr.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+        # ZATCA's /compliance endpoint wants the PEM (headers included) base64-
+        # encoded again as a single string in the `csr` field of the JSON body.
+        csr_base64 = base64.b64encode(csr_pem.encode("utf-8")).decode("utf-8")
+
+        return private_key_pem, csr_pem, csr_base64
+
     def load_private_key(self, private_key_pem: str):
         """Load private key from PEM string."""
         self.private_key = serialization.load_pem_private_key(

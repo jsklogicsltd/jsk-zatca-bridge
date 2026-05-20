@@ -153,9 +153,8 @@ export default function SignInPage() {
                         </div>
 
                         {/* Social Login */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3">
                             <SocialButton provider="google" onClick={() => handleSocialLogin("Google")} />
-                            <SocialButton provider="microsoft" onClick={() => handleSocialLogin("Microsoft")} />
                         </div>
 
                         {/* Sign Up Link */}

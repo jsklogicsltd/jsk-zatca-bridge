@@ -4,7 +4,14 @@
  */
 
 // Client
-export { apiClient, ApiClient, type ApiResponse, type ApiError } from './client';
+export {
+    apiClient,
+    ApiClient,
+    DEMO_MODE,
+    REAL_ZATCA_SUBMISSION,
+    type ApiResponse,
+    type ApiError,
+} from './client';
 
 // Invoice APIs
 export {
@@ -21,6 +28,8 @@ export {
     type InvoiceValidationResult,
     type InvoiceCalculateResult,
     type SignedInvoice,
+    type ZatcaAction,
+    type ZatcaSubmissionResult,
     type InvoiceListResponse,
     type InvoiceResponse,
 } from './invoices';
@@ -28,6 +37,11 @@ export {
 // ZATCA APIs
 export {
     zatcaOnboard,
+    previewCSR,
+    setZatcaCredentials,
+    getZatcaCredentialsStatus,
+    clearZatcaCredentials,
+    upgradeToProduction,
     getCSIDStatus,
     renewCSID,
     complianceCheck,
@@ -36,6 +50,11 @@ export {
     getValidatorInfo,
     type OnboardRequest,
     type OnboardResponse,
+    type CSRPreviewRequest,
+    type CSRPreviewResponse,
+    type ZatcaCredentials,
+    type CredentialsStatus,
+    type UpgradeToProductionResponse,
     type ComplianceCheckRequest,
     type ComplianceCheckResponse,
     type CSIDStatusResponse,

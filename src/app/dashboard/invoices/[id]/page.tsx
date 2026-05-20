@@ -13,7 +13,9 @@ import {
     Building2,
     ChevronDown,
     ChevronUp,
-    Loader2
+    Code,
+    Loader2,
+    Send,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/dashboard/DashboardLayout";
 import { StatusBadge } from "@/components/invoices/StatusBadge";
@@ -22,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { getInvoiceById as getMockInvoiceById } from "@/lib/mockData/invoices";
 import { DEMO_MODE } from "@/lib/api/client";
+import { submitToZatca, type ZatcaSubmissionResult } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 // API base URL
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -58,6 +62,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showAddress, setShowAddress] = useState(false);
+    const [zatcaLog, setZatcaLog] = useState<ZatcaSubmissionResult | null>(null);
+    const [isResubmitting, setIsResubmitting] = useState(false);
+    const [resubmitError, setResubmitError] = useState<string | null>(null);
+    const [showZatcaRaw, setShowZatcaRaw] = useState(false);
 
     // Try to get mock invoice for display fallback
     const mockInvoice = getMockInvoiceById(id);
@@ -90,6 +98,44 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         }
         fetchInvoice();
     }, [id]);
+
+    useEffect(() => {
+        if (invoice?.zatca_response && typeof invoice.zatca_response === "object") {
+            setZatcaLog(invoice.zatca_response as ZatcaSubmissionResult);
+        }
+    }, [invoice]);
+
+    const handleResubmit = async () => {
+        if (!invoice) {
+            setResubmitError(
+                "Resubmission requires a live invoice from the backend (DEMO_MODE is on)."
+            );
+            return;
+        }
+        setIsResubmitting(true);
+        setResubmitError(null);
+        try {
+            const action = invoice.status === "REPORTED" ? "report" : "clear";
+            const payload = (invoice as unknown as { invoice_payload?: never }).invoice_payload;
+            if (!payload) {
+                setResubmitError(
+                    "Original invoice payload not stored on this record — resubmit from the create-invoice wizard."
+                );
+                setIsResubmitting(false);
+                return;
+            }
+            const resp = await submitToZatca(payload, action);
+            if (resp.success && resp.data) {
+                setZatcaLog(resp.data);
+            } else {
+                setResubmitError(resp.error?.detail || "Resubmission failed");
+            }
+        } catch (err) {
+            setResubmitError(err instanceof Error ? err.message : "Network error");
+        } finally {
+            setIsResubmitting(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -315,13 +361,144 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                         </CardContent>
                     </Card>
 
-                    {/* Right Column - Compliance Details */}
-                    <ComplianceCard
-                        clearanceUuid={clearanceUuid ?? undefined}
-                        invoiceHash={invoiceHash ?? undefined}
-                        submittedAt={submittedAt}
-                        validationLog={validationLog}
-                    />
+                    {/* Right Column - Compliance + ZATCA Submission Log */}
+                    <div className="space-y-4">
+                        <ComplianceCard
+                            clearanceUuid={clearanceUuid ?? undefined}
+                            invoiceHash={invoiceHash ?? undefined}
+                            submittedAt={submittedAt}
+                            validationLog={validationLog}
+                        />
+
+                        <Card className="border-slate-200">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                                    <Send size={16} />
+                                    ZATCA Submission Log
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3 text-xs">
+                                {zatcaLog ? (
+                                    <>
+                                        <div>
+                                            <p className="text-slate-500">Status</p>
+                                            <span
+                                                className={cn(
+                                                    "inline-block mt-0.5 px-2 py-0.5 rounded font-mono text-[10px] font-semibold",
+                                                    zatcaLog.status === "CLEARED" ||
+                                                        zatcaLog.status === "REPORTED"
+                                                        ? "bg-green-100 text-green-800"
+                                                        : zatcaLog.status === "CREDENTIALS_MISSING"
+                                                            ? "bg-amber-100 text-amber-800"
+                                                            : "bg-red-100 text-red-800"
+                                                )}
+                                            >
+                                                {zatcaLog.status || "UNKNOWN"}
+                                            </span>
+                                        </div>
+
+                                        {zatcaLog.timestamp && (
+                                            <div>
+                                                <p className="text-slate-500">Timestamp (UTC)</p>
+                                                <p className="font-mono text-slate-800 break-all">
+                                                    {zatcaLog.timestamp}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {(zatcaLog.attempted_url ||
+                                            (zatcaLog.zatca_response as Record<string, unknown>)
+                                                ?.would_be_url) && (
+                                            <div>
+                                                <p className="text-slate-500">URL called</p>
+                                                <p className="font-mono text-slate-800 break-all">
+                                                    {zatcaLog.attempted_url ||
+                                                        String(
+                                                            (zatcaLog.zatca_response as Record<string, unknown>)
+                                                                ?.would_be_url
+                                                        )}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {zatcaLog.clearance_uuid && (
+                                            <div>
+                                                <p className="text-slate-500">Clearance UUID</p>
+                                                <p className="font-mono text-slate-800 break-all">
+                                                    {zatcaLog.clearance_uuid}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {zatcaLog.request_id && (
+                                            <div>
+                                                <p className="text-slate-500">Request ID</p>
+                                                <p className="font-mono text-slate-800 break-all">
+                                                    {zatcaLog.request_id}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="w-full"
+                                            onClick={() => setShowZatcaRaw(!showZatcaRaw)}
+                                        >
+                                            <Code size={12} className="mr-2" />
+                                            {showZatcaRaw ? "Hide" : "Show"} Raw Response
+                                        </Button>
+
+                                        {showZatcaRaw && (
+                                            <pre className="p-3 bg-slate-900 text-emerald-300 rounded overflow-x-auto text-[10px] max-h-56">
+                                                {JSON.stringify(
+                                                    zatcaLog.zatca_response ?? zatcaLog,
+                                                    null,
+                                                    2
+                                                )}
+                                            </pre>
+                                        )}
+
+                                        {(status === "rejected" ||
+                                            status === "pending" ||
+                                            zatcaLog.status === "REJECTED" ||
+                                            zatcaLog.status === "CREDENTIALS_MISSING") && (
+                                            <Button
+                                                onClick={handleResubmit}
+                                                disabled={isResubmitting}
+                                                className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                                                size="sm"
+                                            >
+                                                {isResubmitting ? (
+                                                    <>
+                                                        <Loader2 size={12} className="mr-2 animate-spin" />
+                                                        Resubmitting…
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <RotateCcw size={12} className="mr-2" />
+                                                        Resubmit to ZATCA
+                                                    </>
+                                                )}
+                                            </Button>
+                                        )}
+
+                                        {resubmitError && (
+                                            <p className="text-red-600 text-[11px]">
+                                                {resubmitError}
+                                            </p>
+                                        )}
+                                    </>
+                                ) : (
+                                    <p className="text-slate-500">
+                                        No ZATCA submission has been recorded for this invoice
+                                        {DEMO_MODE && " (DEMO_MODE is on — only newly created invoices show real ZATCA submissions)"}
+                                        .
+                                    </p>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
                 </div>
             </motion.div>
         </DashboardLayout>

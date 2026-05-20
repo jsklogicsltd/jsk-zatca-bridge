@@ -74,6 +74,47 @@ export interface SignedInvoice {
     signed_xml: string;
 }
 
+export type ZatcaAction = 'compliance' | 'report' | 'clear';
+
+export interface ZatcaSubmissionResult {
+    success: boolean;
+    /** REPORTED | CLEARED | REJECTED | CREDENTIALS_MISSING | SIGNED */
+    status: string;
+    invoice_number?: string;
+    invoice_uuid?: string;
+    hash?: string;
+    signature?: string;
+    qr_code?: string;
+    signed_xml?: string;
+    /** Server-generated id for audit log correlation */
+    request_id?: string;
+    /** Alias for request_id (UI label preference) */
+    audit_id?: string;
+    /** ISO8601 timestamp the backend captured before the outbound call */
+    timestamp?: string;
+    /** Actual ZATCA URL the backend tried (or would have tried) */
+    attempted_url?: string;
+    /** Alias for attempted_url emitted by the backend for clarity */
+    would_submit_to?: string;
+    /** Exact JSON body the backend would have POSTed to ZATCA */
+    would_send_payload?: Record<string, unknown>;
+    /** Serialised payload size in bytes */
+    payload_size_bytes?: number;
+    /** Canonical happy-path response shape for the action */
+    expected_response_format?: Record<string, unknown>;
+    /** Which ZATCA action was invoked */
+    action?: ZatcaAction;
+    /** Sandbox / simulation / production */
+    environment?: string;
+    /** Raw JSON returned by ZATCA (or by the credentials_missing shim) */
+    zatca_response?: Record<string, unknown>;
+    /** Response headers from ZATCA (when reachable) */
+    zatca_response_headers?: Record<string, string>;
+    /** Clearance UUID surfaced by ZATCA for B2B invoices */
+    clearance_uuid?: string;
+    message?: string;
+}
+
 export interface InvoiceListResponse {
     total: number;
     invoices: InvoiceResponse[];
@@ -157,13 +198,15 @@ export async function signInvoice(
 }
 
 /**
- * Submit invoice to ZATCA
+ * Submit invoice to ZATCA. With REAL_ZATCA_SUBMISSION = true (client.ts),
+ * this bypasses DEMO_MODE and hits the FastAPI backend, which proxies to
+ * https://gw-fatoora.zatca.gov.sa/... server-side via httpx.
  */
 export async function submitToZatca(
     invoice: InvoiceCreate,
-    action: 'compliance' | 'report' | 'clear' = 'compliance'
-): Promise<ApiResponse<Record<string, unknown>>> {
-    return apiClient.post<Record<string, unknown>>(
+    action: ZatcaAction = 'compliance'
+): Promise<ApiResponse<ZatcaSubmissionResult>> {
+    return apiClient.post<ZatcaSubmissionResult>(
         `/invoices/submit-to-zatca?action=${action}`,
         invoice
     );

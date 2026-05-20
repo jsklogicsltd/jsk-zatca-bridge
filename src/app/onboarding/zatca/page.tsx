@@ -45,13 +45,13 @@ export default function OnboardingZATCAPage() {
         }
     }, []);
 
+    // ZATCA does not expose an "issue OTP" API — taxpayers have to log into
+    // their own Fatoora portal at fatoora.zatca.gov.sa, choose the EGS unit
+    // they want to register, and copy the 6-digit code displayed there. This
+    // handler just moves the wizard forward; the OTP entered is sent later
+    // with the real /compliance call.
     const handleRequestOTP = () => {
-        setIsProcessing(true);
-        // Simulate OTP request
-        setTimeout(() => {
-            setIsProcessing(false);
-            setStep("otp-verify");
-        }, 2000);
+        setStep("otp-verify");
     };
 
     const handleVerifyOTP = async () => {
@@ -72,11 +72,29 @@ export default function OnboardingZATCAPage() {
                 setCsidData(response.data);
                 setStep("complete");
             } else {
-                setError(response.error?.detail || "Failed to generate CSID");
+                // error.detail can come back as an object from FastAPI (e.g.
+                // when the real backend bubbles a structured failure body).
+                // Coerce it to a readable string so we never render an object
+                // as a React child.
+                const detail = response.error?.detail as unknown;
+                const message =
+                    typeof detail === "string"
+                        ? detail
+                        : detail && typeof detail === "object"
+                            ? (detail as { message?: string }).message ??
+                              JSON.stringify(detail)
+                            : "Failed to generate CSID";
+                setError(message);
                 setStep("error");
             }
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Network error");
+            const msg =
+                err instanceof Error
+                    ? err.message
+                    : typeof err === "object" && err !== null
+                        ? JSON.stringify(err)
+                        : "Network error";
+            setError(msg);
             setStep("error");
         }
 
@@ -163,35 +181,77 @@ export default function OnboardingZATCAPage() {
                             animate={{ opacity: 1, x: 0 }}
                             className="space-y-6"
                         >
-                            <Card className="p-8 border-slate-200 text-center">
-                                <div className="w-16 h-16 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center mb-4">
-                                    <Shield className="w-8 h-8 text-amber-600" />
-                                </div>
-                                <h2 className="text-xl font-semibold mb-2">OTP Verification Required</h2>
-                                <p className="text-slate-600 mb-6">
-                                    ZATCA will send an OTP to your registered email
-                                </p>
-                                <div className="bg-slate-100 p-3 rounded-lg mb-6">
-                                    <p className="text-sm text-slate-600">{companyInfo.email || "company@example.com"}</p>
-                                    {companyInfo.organization_name && (
-                                        <p className="text-xs text-slate-500 mt-1">
-                                            {companyInfo.organization_name} • {companyInfo.tax_id}
+                            <Card className="p-8 border-slate-200">
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-12 h-12 bg-amber-500/10 rounded-full flex items-center justify-center">
+                                        <Shield className="w-6 h-6 text-amber-600" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-semibold">Generate OTP in your Fatoora portal</h2>
+                                        <p className="text-sm text-slate-500">
+                                            ZATCA does not issue OTPs through us — fetch one from their portal first.
                                         </p>
-                                    )}
+                                    </div>
                                 </div>
+
+                                <ol className="list-decimal list-inside space-y-2 text-sm text-slate-700 mb-6">
+                                    <li>
+                                        Open{" "}
+                                        <a
+                                            href="https://fatoora.zatca.gov.sa"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-amber-600 hover:underline font-medium"
+                                        >
+                                            fatoora.zatca.gov.sa
+                                        </a>{" "}
+                                        and sign in with your ERAD / TIN credentials.
+                                    </li>
+                                    <li>
+                                        Choose <strong>Onboard New Solution Unit / Device</strong>.
+                                    </li>
+                                    <li>
+                                        Enter the EGS unit details and click <strong>Generate OTP</strong> —
+                                        ZATCA will show a 6-digit code on screen, valid for ~60 minutes.
+                                    </li>
+                                    <li>
+                                        Copy that OTP and paste it on the next step. We'll generate a
+                                        CSR, post it to <code className="bg-slate-100 px-1 rounded">/compliance</code>,
+                                        and store the returned CSID.
+                                    </li>
+                                </ol>
+
+                                <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg mb-6 text-xs text-slate-600">
+                                    <strong>Sandbox shortcut:</strong> on the{" "}
+                                    <a
+                                        href="https://sandbox.zatca.gov.sa/IntegrationSandbox"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-amber-600 hover:underline"
+                                    >
+                                        Integration Sandbox
+                                    </a>{" "}
+                                    you can request a sample OTP without a real Fatoora account — it's
+                                    valid only against the developer-portal URL.
+                                </div>
+
+                                {companyInfo.organization_name && (
+                                    <div className="bg-slate-100 p-3 rounded-lg mb-6 text-sm">
+                                        <p className="text-slate-600">
+                                            Onboarding{" "}
+                                            <strong>{companyInfo.organization_name}</strong>
+                                            {companyInfo.tax_id && (
+                                                <span className="text-slate-500"> • VAT {companyInfo.tax_id}</span>
+                                            )}
+                                        </p>
+                                    </div>
+                                )}
+
                                 <Button
                                     onClick={handleRequestOTP}
-                                    disabled={isProcessing}
-                                    className="bg-amber-500 hover:bg-amber-600 text-white"
+                                    className="bg-amber-500 hover:bg-amber-600 text-white w-full"
                                 >
-                                    {isProcessing ? (
-                                        <>
-                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                            Requesting...
-                                        </>
-                                    ) : (
-                                        "Request OTP"
-                                    )}
+                                    I have the OTP — continue
                                 </Button>
                             </Card>
                         </motion.div>
@@ -205,9 +265,10 @@ export default function OnboardingZATCAPage() {
                             className="space-y-6"
                         >
                             <Card className="p-8 border-slate-200 text-center">
-                                <h2 className="text-xl font-semibold mb-4">Enter OTP Code</h2>
+                                <h2 className="text-xl font-semibold mb-4">Enter OTP from Fatoora portal</h2>
                                 <p className="text-sm text-slate-600 mb-4">
-                                    For testing, enter any 6 digits (e.g., 123456)
+                                    Paste the 6-digit code from fatoora.zatca.gov.sa. We'll generate a
+                                    CSR (secp256k1) and POST it to ZATCA's <code>/compliance</code> endpoint.
                                 </p>
                                 <div className="flex justify-center gap-2 mb-6">
                                     {otp.map((digit, i) => (

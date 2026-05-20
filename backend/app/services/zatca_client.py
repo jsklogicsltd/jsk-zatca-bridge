@@ -64,21 +64,173 @@ class ZatcaClient:
     def _create_auth_header(self) -> Dict[str, str]:
         """
         Create Basic Authentication header using CSID and secret.
-        
+
         Returns:
             Authorization header dict
         """
         if not self.csid or not self.secret:
             raise ValueError("CSID and secret are required for authentication")
-        
+
         # Encode credentials as Base64
         credentials = f"{self.csid}:{self.secret}"
         encoded = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
-        
+
         return {
             "Authorization": f"Basic {encoded}"
         }
+
+    def has_credentials(self) -> bool:
+        """Return True if both CSID and secret are configured."""
+        return bool(self.csid) and bool(self.secret)
+
+    def build_url(self, endpoint: str) -> str:
+        """Compose the full URL the client would POST to for an action."""
+        return f"{self.base_url}{endpoint}"
+
+    def _credentials_missing_response(
+        self,
+        endpoint: str,
+        payload: Dict[str, Any],
+        action: str,
+    ) -> Dict[str, Any]:
+        """
+        Return a structured "would-have-called" response when CSID/secret
+        are not configured. This keeps the demo honest: callers can see the
+        exact URL, method, headers, and payload that WOULD have hit ZATCA.
+        """
+        return {
+            "success": False,
+            "status": "credentials_missing",
+            "action": action,
+            "environment": self.environment,
+            "message": (
+                "ZATCA credentials not configured on the backend. "
+                "Set ZATCA_CSID and ZATCA_API_KEY in backend/.env to make "
+                "real submissions to the Fatoora portal."
+            ),
+            "would_be_url": self.build_url(endpoint),
+            "would_be_method": "POST",
+            "would_be_headers": {
+                "Accept": "application/json",
+                "Accept-Language": "en",
+                "Content-Type": "application/json",
+                "Authorization": "Basic <base64(CSID:secret)>",
+            },
+            "would_be_payload": payload,
+        }
     
+    async def request_compliance_csid(
+        self,
+        csr_base64: str,
+        otp: str,
+    ) -> Dict[str, Any]:
+        """
+        ZATCA Phase-2 onboarding step 1: request a Compliance CSID (CCSID).
+
+        Posts the base64-encoded CSR to `/compliance` with the OTP supplied
+        by the taxpayer's Fatoora portal. ZATCA returns a binarySecurityToken
+        (CCSID) and a secret that together form the Basic-auth credential
+        used for compliance invoice submissions.
+
+        Args:
+            csr_base64: Base64 of the PEM CSR produced by CryptoSigner.generate_csr()
+            otp:        6-digit OTP retrieved from the taxpayer's Fatoora portal
+
+        Returns:
+            Dict with success/binarySecurityToken/secret/requestID/dispositionMessage,
+            plus _attempted_url and _response_headers for audit logging.
+        """
+        endpoint = "/compliance"
+        payload = {"csr": csr_base64}
+        headers = {
+            "OTP": otp,
+            "Accept-Version": "V2",
+            "Accept": "application/json",
+            "Accept-Language": "en",
+            "Content-Type": "application/json",
+        }
+        try:
+            response = await self.client.post(endpoint, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            return {
+                "success": True,
+                "requestID": result.get("requestID"),
+                "dispositionMessage": result.get("dispositionMessage"),
+                "tokenType": result.get("tokenType"),
+                "binarySecurityToken": result.get("binarySecurityToken"),
+                "secret": result.get("secret"),
+                "_attempted_url": self.build_url(endpoint),
+                "_response_headers": dict(response.headers),
+                "raw": result,
+            }
+        except httpx.HTTPStatusError as e:
+            error_detail = self._parse_error_response(e.response)
+            raise ZatcaAPIError(f"Compliance CSID request failed: {error_detail}")
+        except httpx.RequestError as e:
+            raise ZatcaAPIError(f"Request failed: {str(e)}")
+
+    async def request_production_csid(
+        self,
+        compliance_request_id: str,
+        compliance_csid: Optional[str] = None,
+        compliance_secret: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        ZATCA Phase-2 onboarding step 2: upgrade CCSID → PCSID.
+
+        After the CCSID has successfully reported/cleared the required set of
+        compliance invoices, call `/production/csids` with the requestID issued
+        by the original `/compliance` response and Basic-auth using the CCSID.
+
+        Args:
+            compliance_request_id: requestID returned by request_compliance_csid()
+            compliance_csid:       CCSID binarySecurityToken (defaults to self.csid)
+            compliance_secret:     CCSID secret (defaults to self.secret)
+        """
+        endpoint = "/production/csids"
+        payload = {"compliance_request_id": compliance_request_id}
+
+        # Temporarily swap in compliance credentials for this request only.
+        original_csid, original_secret = self.csid, self.secret
+        if compliance_csid:
+            self.csid = compliance_csid
+        if compliance_secret:
+            self.secret = compliance_secret
+
+        if not self.has_credentials():
+            self.csid, self.secret = original_csid, original_secret
+            return self._credentials_missing_response(endpoint, payload, "production_csid")
+
+        headers = {
+            "Accept-Version": "V2",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **self._create_auth_header(),
+        }
+        try:
+            response = await self.client.post(endpoint, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            return {
+                "success": True,
+                "requestID": result.get("requestID"),
+                "dispositionMessage": result.get("dispositionMessage"),
+                "tokenType": result.get("tokenType"),
+                "binarySecurityToken": result.get("binarySecurityToken"),
+                "secret": result.get("secret"),
+                "_attempted_url": self.build_url(endpoint),
+                "_response_headers": dict(response.headers),
+                "raw": result,
+            }
+        except httpx.HTTPStatusError as e:
+            error_detail = self._parse_error_response(e.response)
+            raise ZatcaAPIError(f"Production CSID request failed: {error_detail}")
+        except httpx.RequestError as e:
+            raise ZatcaAPIError(f"Request failed: {str(e)}")
+        finally:
+            self.csid, self.secret = original_csid, original_secret
+
     async def compliance_check(
         self,
         invoice_hash: str,
@@ -100,38 +252,42 @@ class ZatcaClient:
             ZatcaAPIError: If compliance check fails
         """
         endpoint = "/compliance/invoices"
-        
+
         # Prepare request payload
         payload = {
             "invoiceHash": invoice_hash,
             "uuid": uuid,
             "invoice": invoice_xml
         }
-        
+
+        if not self.has_credentials():
+            return self._credentials_missing_response(endpoint, payload, "compliance")
+
         try:
             response = await self.client.post(
                 endpoint,
                 json=payload,
                 headers=self._create_auth_header()
             )
-            
+
             response.raise_for_status()
             result = response.json()
-            
+
             # Check for validation errors
             if "validationResults" in result:
                 errors = self._parse_validation_results(result["validationResults"])
                 if errors["error_count"] > 0:
                     result["parsed_errors"] = errors
-            
+
+            result["_response_headers"] = dict(response.headers)
             return result
-            
+
         except httpx.HTTPStatusError as e:
             error_detail = self._parse_error_response(e.response)
             raise ZatcaAPIError(f"Compliance check failed: {error_detail}")
         except httpx.RequestError as e:
             raise ZatcaAPIError(f"Request failed: {str(e)}")
-    
+
     async def report_invoice(
         self,
         invoice_hash: str,
@@ -153,42 +309,46 @@ class ZatcaClient:
             ZatcaAPIError: If reporting fails
         """
         endpoint = "/invoices/reporting/single"
-        
+
         payload = {
             "invoiceHash": invoice_hash,
             "uuid": uuid,
             "invoice": invoice_xml
         }
-        
+
+        if not self.has_credentials():
+            return self._credentials_missing_response(endpoint, payload, "report")
+
         try:
             response = await self.client.post(
                 endpoint,
                 json=payload,
                 headers=self._create_auth_header()
             )
-            
+
             response.raise_for_status()
             result = response.json()
-            
+
             # Parse validation results if present
             if "validationResults" in result:
                 errors = self._parse_validation_results(result["validationResults"])
                 result["parsed_errors"] = errors
-            
+
             # Check if reported successfully
             if result.get("reportingStatus") == "REPORTED":
                 result["success"] = True
             else:
                 result["success"] = False
-            
+
+            result["_response_headers"] = dict(response.headers)
             return result
-            
+
         except httpx.HTTPStatusError as e:
             error_detail = self._parse_error_response(e.response)
             raise ZatcaAPIError(f"Invoice reporting failed: {error_detail}")
         except httpx.RequestError as e:
             raise ZatcaAPIError(f"Request failed: {str(e)}")
-    
+
     async def clear_invoice(
         self,
         invoice_hash: str,
@@ -210,28 +370,31 @@ class ZatcaClient:
             ZatcaAPIError: If clearance fails
         """
         endpoint = "/invoices/clearance/single"
-        
+
         payload = {
             "invoiceHash": invoice_hash,
             "uuid": uuid,
             "invoice": invoice_xml
         }
-        
+
+        if not self.has_credentials():
+            return self._credentials_missing_response(endpoint, payload, "clear")
+
         try:
             response = await self.client.post(
                 endpoint,
                 json=payload,
                 headers=self._create_auth_header()
             )
-            
+
             response.raise_for_status()
             result = response.json()
-            
+
             # Parse validation results if present
             if "validationResults" in result:
                 errors = self._parse_validation_results(result["validationResults"])
                 result["parsed_errors"] = errors
-            
+
             # Check if cleared successfully
             if result.get("clearanceStatus") == "CLEARED":
                 result["success"] = True
@@ -240,9 +403,10 @@ class ZatcaClient:
                     result["cleared_xml"] = result["clearedInvoice"]
             else:
                 result["success"] = False
-            
+
+            result["_response_headers"] = dict(response.headers)
             return result
-            
+
         except httpx.HTTPStatusError as e:
             error_detail = self._parse_error_response(e.response)
             raise ZatcaAPIError(f"Invoice clearance failed: {error_detail}")

@@ -1,8 +1,9 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { logout } from "@/lib/api";
 import {
     LayoutDashboard,
     FileText,
@@ -39,10 +40,30 @@ const iconMap: Record<string, React.ElementType> = {
 
 export function Sidebar() {
     const pathname = usePathname();
+    const router = useRouter();
     const { sidebarCollapsed, setSidebarCollapsed, mobileSidebarOpen, setMobileSidebarOpen } = useDashboard();
     const [userMenuOpen, setUserMenuOpen] = useState(false);
+    const [signingOut, setSigningOut] = useState(false);
 
     const isActive = (href: string) => pathname === href;
+
+    const handleSignOut = async () => {
+        if (signingOut) return;
+        setSigningOut(true);
+        try {
+            await logout();
+        } finally {
+            // Wipe onboarding / integration state so the next sign-in starts clean.
+            if (typeof window !== "undefined") {
+                ["onboarding_company", "onboarding_zatca", "onboarding_integration",
+                    "onboarding_preferences", "zatca_csid"].forEach((k) =>
+                        localStorage.removeItem(k)
+                    );
+            }
+            setUserMenuOpen(false);
+            router.push("/auth/signin");
+        }
+    };
 
     const NavGroup = ({ title, items }: { title: string; items: typeof navigationItems.main }) => (
         <div className="space-y-1">
@@ -141,8 +162,14 @@ export function Sidebar() {
                                     <CreditCard size={16} /> Billing
                                 </Link>
                                 <hr className="my-1" />
-                                <button className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
-                                    <LogOut size={16} /> Sign Out
+                                <button
+                                    type="button"
+                                    onClick={handleSignOut}
+                                    disabled={signingOut}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-wait"
+                                >
+                                    <LogOut size={16} />
+                                    {signingOut ? "Signing out…" : "Sign Out"}
                                 </button>
                             </motion.div>
                         )}

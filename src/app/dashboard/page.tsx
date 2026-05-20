@@ -5,6 +5,8 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { QuickActionCard } from "@/components/dashboard/QuickActionCard";
 import { ActivityTimeline } from "@/components/dashboard/ActivityTimeline";
 import { SystemStatusCard } from "@/components/dashboard/SystemStatusCard";
+import { IntegrationStatusCard } from "@/components/dashboard/IntegrationStatusCard";
+import { IntegrationLiveBanner } from "@/components/dashboard/IntegrationLiveBanner";
 import { quickActions } from "@/lib/mockData";
 import { motion } from "framer-motion";
 import { useDashboardStats, useHealthStatus } from "@/lib/hooks/useApi";
@@ -43,6 +45,9 @@ export default function DashboardPage() {
                 transition={{ duration: 0.3 }}
                 className="space-y-6"
             >
+                {/* Integration "live" banner (only if user finished ERP onboarding) */}
+                <IntegrationLiveBanner />
+
                 {/* Backend Status Banner */}
                 {!healthLoading && (
                     <div className={`px-4 py-2 rounded-lg text-sm flex items-center gap-2 ${isBackendOnline
@@ -129,7 +134,10 @@ export default function DashboardPage() {
                 {/* Activity & Status Row */}
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
                     <ActivityTimeline />
-                    <SystemStatusCard />
+                    <div className="space-y-4">
+                        <IntegrationStatusCard />
+                        <SystemStatusCard />
+                    </div>
                 </div>
             </motion.div>
         </DashboardLayout>

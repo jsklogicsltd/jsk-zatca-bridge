@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Fernet key used to encrypt stored ZATCA credentials. Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # If unset, a key is derived from SECRET_KEY (dev-only).
+    ENCRYPTION_KEY: Optional[str] = None
     
     model_config = SettingsConfigDict(
         env_file=".env",

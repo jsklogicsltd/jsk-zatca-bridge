@@ -46,3 +46,11 @@ next-env.d.ts
 *.swp
 *.swo
 *~
+
+# Python (backend)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.db
+backend/*.db

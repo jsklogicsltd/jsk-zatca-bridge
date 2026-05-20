@@ -265,24 +265,77 @@ async def submit_invoice_to_zatca(
     from app.services.xml_builder import InvoiceXMLBuilder
     from app.services.crypto_signer import CryptoSigner
     from app.services.zatca_client import ZatcaClient, ZatcaAPIError
-    from datetime import datetime
+    from datetime import datetime, timezone
     import base64
-    
+    import json
+    import logging
+    import uuid as uuid_pkg
+
+    logger = logging.getLogger("zatca.submit")
+
     if action not in ["compliance", "report", "clear"]:
         raise HTTPException(
             status_code=400,
             detail="Invalid action. Must be compliance, report, or clear"
         )
-    
+
+    # Audit-trail identifiers — included in the response so the frontend
+    # (and any external ERP) can correlate this submission with backend logs.
+    request_id = str(uuid_pkg.uuid4())
+    submitted_at = datetime.now(timezone.utc).isoformat()
+
+    # Map action → endpoint path on the ZATCA Fatoora portal, so we can
+    # report the actual URL we attempted even before constructing the client.
+    action_to_endpoint = {
+        "compliance": "/compliance/invoices",
+        "report": "/invoices/reporting/single",
+        "clear": "/invoices/clearance/single",
+    }
+
+    # Canonical response shapes the live ZATCA endpoints emit on success.
+    # Surfaced in the API response so the UI can render an "Expected ZATCA
+    # response" preview even when no credentials are configured.
+    expected_response_formats = {
+        "compliance": {
+            "validationResults": {
+                "infoMessages": [{"code": "XSD_VALID", "message": "XSD validated"}],
+                "warningMessages": [],
+                "errorMessages": [],
+                "status": "PASS",
+            },
+            "reportingStatus": None,
+            "clearanceStatus": None,
+        },
+        "report": {
+            "validationResults": {
+                "infoMessages": [],
+                "warningMessages": [],
+                "errorMessages": [],
+                "status": "PASS",
+            },
+            "reportingStatus": "REPORTED",
+        },
+        "clear": {
+            "validationResults": {
+                "infoMessages": [],
+                "warningMessages": [],
+                "errorMessages": [],
+                "status": "PASS",
+            },
+            "clearanceStatus": "CLEARED",
+            "clearedInvoice": "<base64 of ZATCA-cleared XML>",
+        },
+    }
+
     try:
         # Step 1: Generate and sign invoice
         builder = InvoiceXMLBuilder(invoice_data, previous_invoice_hash=None)
         xml_bytes = builder.build()
-        
+
         signer = CryptoSigner()
         private_key_pem, public_key_pem = signer.generate_key_pair()
         hash_base64, signature_base64, signed_xml = signer.sign_invoice_xml(xml_bytes)
-        
+
         # Generate QR code
         timestamp = f"{invoice_data.issue_date.isoformat()}T{datetime.now().strftime('%H:%M:%S')}"
         qr_data = signer.generate_tlv_qr(
@@ -295,12 +348,17 @@ async def submit_invoice_to_zatca(
             signature=signature_base64,
             public_key=public_key_pem
         )
-        
+
         final_xml = signer.insert_qr_code_into_xml(signed_xml, qr_data)
         xml_base64 = base64.b64encode(final_xml).decode('utf-8')
-        
+
         # Step 2: Submit to ZATCA
         async with ZatcaClient(environment="sandbox") as zatca:
+            attempted_url = zatca.build_url(action_to_endpoint[action])
+            logger.info(
+                "ZATCA submit request_id=%s action=%s url=%s uuid=%s",
+                request_id, action, attempted_url, builder.invoice_uuid,
+            )
             if action == "compliance":
                 zatca_response = await zatca.compliance_check(
                     invoice_hash=hash_base64,
@@ -319,9 +377,16 @@ async def submit_invoice_to_zatca(
                     uuid=builder.invoice_uuid,
                     invoice_xml=xml_base64
                 )
-        
+
+        # Pull out response headers (set by zatca_client when ZATCA actually
+        # responded) into a top-level field for the audit trail.
+        zatca_response_headers = zatca_response.pop("_response_headers", None) \
+            if isinstance(zatca_response, dict) else None
+
         # Step 3: Determine status from response
-        if zatca_response.get("success"):
+        if zatca_response.get("status") == "credentials_missing":
+            invoice_status = "CREDENTIALS_MISSING"
+        elif zatca_response.get("success"):
             if action == "report":
                 invoice_status = "REPORTED"
             elif action == "clear":
@@ -330,10 +395,50 @@ async def submit_invoice_to_zatca(
                 invoice_status = "SIGNED"
         else:
             invoice_status = "REJECTED"
-        
+
+        # Best-effort clearance UUID extraction (ZATCA's exact field name
+        # varies by phase; surface whichever showed up).
+        clearance_uuid = None
+        if isinstance(zatca_response, dict):
+            clearance_uuid = (
+                zatca_response.get("clearanceId")
+                or zatca_response.get("reportingId")
+                or zatca_response.get("uuid")
+            )
+
+        logger.info(
+            "ZATCA submit request_id=%s status=%s",
+            request_id, invoice_status,
+        )
+
+        # Pre-compute the payload we'd POST to ZATCA so the UI can display
+        # "what would be sent" cleanly. xml_base64 truncated for transport.
+        zatca_payload = {
+            "invoiceHash": hash_base64,
+            "uuid": builder.invoice_uuid,
+            "invoice": xml_base64,
+        }
+        payload_size_bytes = len(
+            json.dumps(zatca_payload, separators=(",", ":")).encode("utf-8")
+        )
+        zatca_payload_preview = {
+            **zatca_payload,
+            "invoice": (xml_base64[:200] + "…(truncated)" if len(xml_base64) > 200 else xml_base64),
+        }
+
         # Return complete result
         return {
             "success": zatca_response.get("success", False),
+            "request_id": request_id,
+            "audit_id": request_id,
+            "timestamp": submitted_at,
+            "attempted_url": attempted_url,
+            "would_submit_to": attempted_url,
+            "would_send_payload": zatca_payload_preview,
+            "payload_size_bytes": payload_size_bytes,
+            "expected_response_format": expected_response_formats.get(action),
+            "action": action,
+            "environment": "sandbox",
             "invoice_number": invoice_data.invoice_number,
             "invoice_uuid": builder.invoice_uuid,
             "hash": hash_base64,
@@ -341,24 +446,32 @@ async def submit_invoice_to_zatca(
             "qr_code": qr_data,
             "signed_xml": final_xml.decode('utf-8'),
             "zatca_response": zatca_response,
+            "zatca_response_headers": zatca_response_headers,
+            "clearance_uuid": clearance_uuid,
             "status": invoice_status,
-            "timestamp": timestamp,
-            "message": f"Invoice {action} completed"
+            "message": f"Invoice {action} completed",
         }
-        
+
     except ZatcaAPIError as e:
+        logger.warning("ZATCA submit request_id=%s ZatcaAPIError=%s", request_id, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
                 "success": False,
-                "message": f"ZATCA API error: {str(e)}"
+                "request_id": request_id,
+                "timestamp": submitted_at,
+                "attempted_url": f"https://gw-fatoora.zatca.gov.sa/e-invoicing/developer-portal{action_to_endpoint[action]}",
+                "message": f"ZATCA API error: {str(e)}",
             }
         )
     except Exception as e:
+        logger.exception("ZATCA submit request_id=%s unhandled", request_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "success": False,
-                "message": f"Submission error: {str(e)}"
+                "request_id": request_id,
+                "timestamp": submitted_at,
+                "message": f"Submission error: {str(e)}",
             }
         )
