@@ -11,10 +11,12 @@ import { FormInput } from "@/components/auth/FormInput";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { forgotPasswordSchema, type ForgotPasswordFormData } from "@/lib/validationSchemas";
+import { requestPasswordReset } from "@/lib/api";
 
 export default function ForgotPasswordPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const {
         register,
@@ -27,14 +29,20 @@ export default function ForgotPasswordPage() {
 
     const onSubmit = async (data: ForgotPasswordFormData) => {
         setIsLoading(true);
+        setErrorMessage(null);
 
-        // Simulate API call
-        console.log("Reset password for:", data.email);
+        const redirectTo =
+            typeof window !== "undefined"
+                ? `${window.location.origin}/auth/reset-password`
+                : undefined;
 
-        setTimeout(() => {
-            setIsLoading(false);
+        const response = await requestPasswordReset(data.email, redirectTo);
+        setIsLoading(false);
+        if (response.success) {
             setIsSuccess(true);
-        }, 2000);
+        } else {
+            setErrorMessage(response.error?.detail || "Could not send reset email.");
+        }
     };
 
     return (
@@ -93,6 +101,11 @@ export default function ForgotPasswordPage() {
                         </motion.div>
                     ) : (
                         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+                            {errorMessage && (
+                                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                                    {errorMessage}
+                                </div>
+                            )}
                             {/* Email */}
                             <FormInput
                                 {...register("email")}

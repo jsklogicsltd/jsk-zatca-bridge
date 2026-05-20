@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # If unset, a key is derived from SECRET_KEY (dev-only).
     ENCRYPTION_KEY: Optional[str] = None
+
+    # Supabase (Auth + Storage). The backend verifies Supabase-issued JWTs
+    # against SUPABASE_JWT_SECRET. Get this from:
+    #   Supabase Dashboard → Settings → API → JWT Settings → JWT Secret
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_JWT_SECRET: Optional[str] = None
+    # Optional: service-role key for admin operations (bypass RLS). Required if
+    # the backend needs to write to storage on behalf of a user.
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    # JWT audience claim Supabase signs into access tokens. Default "authenticated".
+    SUPABASE_JWT_AUDIENCE: str = "authenticated"
     
     model_config = SettingsConfigDict(
         env_file=".env",

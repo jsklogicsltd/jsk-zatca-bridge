@@ -82,6 +82,8 @@ export {
     getStoredUser,
     clearAuth,
     isAuthenticated,
+    requestPasswordReset,
+    resendVerificationEmail,
     type SignupRequest,
     type LoginRequest,
     type User,

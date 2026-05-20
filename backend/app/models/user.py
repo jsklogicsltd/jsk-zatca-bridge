@@ -6,13 +6,21 @@ from app.db.base import Base
 
 
 class User(Base):
-    """User model for authentication and authorization."""
+    """
+    Local user/profile row. Identity now comes from Supabase Auth; this row
+    exists only to link Supabase users (auth_user_id) to ZATCA credentials and
+    other backend-owned state.
+    """
 
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Supabase auth.users.id — the actual identity. Nullable for legacy rows
+    # created before Supabase was wired up.
+    auth_user_id = Column(String(36), unique=True, index=True, nullable=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    # No longer used — Supabase owns the password. Kept nullable for legacy rows.
+    hashed_password = Column(String(255), nullable=True)
 
     # Profile info
     full_name = Column(String(255), nullable=True)

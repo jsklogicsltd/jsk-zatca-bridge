@@ -4,6 +4,7 @@
  */
 
 import { resolveDemo } from './demoData';
+import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -12,7 +13,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/a
  * of hitting the FastAPI backend (no backend/Firebase needed for demos).
  * Set to false to restore real backend integration.
  */
-export const DEMO_MODE = true;
+export const DEMO_MODE = false;
 
 /**
  * REAL_ZATCA_SUBMISSION — when true, the `/invoices/submit-to-zatca`
@@ -107,12 +108,28 @@ class ApiClient {
             'Content-Type': 'application/json',
         };
 
+        // Attach Supabase access token unless the caller already set one. Skipped
+        // server-side (no browser supabase client) — server callers pass their
+        // own header.
+        const callerHeaders = (options.headers as Record<string, string>) || {};
+        if (!callerHeaders.Authorization && !callerHeaders.authorization && typeof window !== 'undefined') {
+            try {
+                const supabase = createSupabaseClient();
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session?.access_token) {
+                    callerHeaders.Authorization = `Bearer ${session.access_token}`;
+                }
+            } catch {
+                // Supabase not configured — fall through with no auth header.
+            }
+        }
+
         try {
             const response = await fetch(url, {
                 ...options,
                 headers: {
                     ...defaultHeaders,
-                    ...options.headers,
+                    ...callerHeaders,
                 },
             });
 

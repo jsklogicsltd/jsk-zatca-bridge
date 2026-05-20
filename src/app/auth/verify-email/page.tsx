@@ -2,16 +2,20 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Mail, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { resendVerificationEmail } from "@/lib/api";
 
 export default function VerifyEmailPage() {
+    const searchParams = useSearchParams();
     const [isResending, setIsResending] = useState(false);
     const [countdown, setCountdown] = useState(0);
-    const [email] = useState("user@company.com"); // In real app, get from route params or state
+    const [feedback, setFeedback] = useState<string | null>(null);
+    const email = searchParams.get("email") ?? "your email address";
 
     useEffect(() => {
         if (countdown > 0) {
@@ -21,18 +25,18 @@ export default function VerifyEmailPage() {
     }, [countdown]);
 
     const handleResend = async () => {
-        if (countdown > 0) return;
-
+        if (countdown > 0 || !searchParams.get("email")) return;
         setIsResending(true);
+        setFeedback(null);
 
-        // Simulate API call
-        console.log("Resending verification email to:", email);
-
-        setTimeout(() => {
-            setIsResending(false);
-            setCountdown(60); // Start 60 second countdown
-            alert("Verification email sent! (UI only - no backend)");
-        }, 1500);
+        const response = await resendVerificationEmail(searchParams.get("email")!);
+        setIsResending(false);
+        if (response.success) {
+            setCountdown(60);
+            setFeedback("Verification email sent.");
+        } else {
+            setFeedback(response.error?.detail || "Could not resend verification email.");
+        }
     };
 
     return (
@@ -70,6 +74,9 @@ export default function VerifyEmailPage() {
                             <p className="text-xs text-slate-500">
                                 Didn't receive the email? Check your spam folder or request a new one.
                             </p>
+                            {feedback && (
+                                <p className="text-xs text-amber-700">{feedback}</p>
+                            )}
                         </div>
                     </div>
 
