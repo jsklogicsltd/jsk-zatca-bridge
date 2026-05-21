@@ -17,6 +17,13 @@ if not settings.DATABASE_URL.startswith("sqlite"):
         "max_overflow": 20,
     })
 
+# asyncpg caches server-side prepared statements by default, which breaks
+# behind a transaction-mode connection pooler (e.g. Supabase's pgbouncer on
+# port 6543). Disabling the cache makes the backend safe regardless of which
+# Supabase connection string is used. Harmless on a direct/session connection.
+if "+asyncpg" in settings.DATABASE_URL:
+    engine_kwargs["connect_args"] = {"statement_cache_size": 0}
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     **engine_kwargs

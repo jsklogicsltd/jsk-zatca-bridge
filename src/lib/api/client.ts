@@ -152,6 +152,34 @@ class ApiClient {
                 success: true,
             };
         } catch (error) {
+            // Backend unreachable (e.g. the public demo deploy where
+            // NEXT_PUBLIC_API_URL points at a host that isn't serving the
+            // FastAPI backend). For everything except the live ZATCA submit
+            // endpoints — which deliberately surface the offline state as a
+            // polished "what would be sent" preview (see submitToZatcaFlow /
+            // ZatcaResponseCard) — transparently fall back to demo data so the
+            // app stays fully usable instead of throwing a raw NetworkError.
+            // This is what the "Demo Mode (backend offline)" pill promises.
+            if (!isRealZatcaEndpoint(endpoint)) {
+                let parsedBody: unknown;
+                try {
+                    parsedBody =
+                        typeof options.body === 'string'
+                            ? JSON.parse(options.body)
+                            : undefined;
+                } catch {
+                    parsedBody = undefined;
+                }
+                return {
+                    data: resolveDemo(
+                        options.method || 'GET',
+                        endpoint,
+                        parsedBody
+                    ) as T,
+                    error: null,
+                    success: true,
+                };
+            }
             return {
                 data: null,
                 error: {

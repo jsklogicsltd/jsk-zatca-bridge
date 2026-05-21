@@ -1,0 +1,25 @@
+# Keep the build context small and free of secrets / local state.
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.so
+
+# Local secrets — set these as Railway env vars instead.
+.env
+.env.local
+
+# Local SQLite databases (Postgres is used in production).
+*.db
+*.sqlite3
+
+# Tests & dev artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Editor
+.vscode/
+.idea/

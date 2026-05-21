@@ -1,0 +1,15 @@
+# Railway service config for the ZATCA Bridge backend.
+# Railway auto-detects the Dockerfile, but pinning it here is explicit and
+# also lets us declare the health check + restart policy.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Hits the FastAPI health route once the container is up. Path must match the
+# router mount: api_v1_router is mounted at /api/v1, health is at /health.
+healthcheckPath = "/api/v1/health"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
