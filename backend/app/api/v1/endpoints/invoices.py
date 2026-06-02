@@ -208,6 +208,10 @@ async def sign_invoice(invoice_data: InvoiceCreate, db: AsyncSession = Depends(g
             hash=hash_base64,
             signature=signature_base64,
             qr_code=qr_data,
+            subtotal=invoice_data.calculated_total_excluding_vat,
+            tax_amount=invoice_data.calculated_total_vat,
+            total=invoice_data.calculated_total_including_vat,
+            currency=invoice_data.currency_code,
             status=InvoiceStatus.SIGNED
         )
         db.add(db_invoice)

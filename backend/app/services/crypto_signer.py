@@ -322,14 +322,31 @@ class CryptoSigner:
         }
         
         extension_content = tree.find('.//ext:ExtensionContent', namespaces)
-        
+
         if extension_content is not None:
             # Clear existing content
             extension_content.clear()
-            
+
+            # ZATCA wraps the XML-DSig signature in a UBL document-signatures
+            # envelope. BR-KSA-28 requires the SignatureInformation/cbc:ID to be
+            # exactly "urn:oasis:names:specification:ubl:signature:1", and the
+            # ReferencedSignatureID must match the cac:Signature/cbc:ID in the
+            # invoice body ("...:signature:Invoice").
+            sig_ns = '{urn:oasis:names:specification:ubl:schema:xsd:CommonSignatureComponents-2}'
+            sac_ns = '{urn:oasis:names:specification:ubl:schema:xsd:SignatureAggregateComponents-2}'
+            sbc_ns = '{urn:oasis:names:specification:ubl:schema:xsd:SignatureBasicComponents-2}'
+            cbc_ns = '{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}'
+
+            ubl_signatures = etree.SubElement(extension_content, f'{sig_ns}UBLDocumentSignatures')
+            sig_info = etree.SubElement(ubl_signatures, f'{sac_ns}SignatureInformation')
+            sig_info_id = etree.SubElement(sig_info, f'{cbc_ns}ID')
+            sig_info_id.text = 'urn:oasis:names:specification:ubl:signature:1'
+            referenced_sig_id = etree.SubElement(sig_info, f'{sbc_ns}ReferencedSignatureID')
+            referenced_sig_id.text = 'urn:oasis:names:specification:ubl:signature:Invoice'
+
             # Create Signature element
             ds_ns = '{http://www.w3.org/2000/09/xmldsig#}'
-            signature = etree.SubElement(extension_content, f'{ds_ns}Signature')
+            signature = etree.SubElement(sig_info, f'{ds_ns}Signature')
             signature.set('Id', 'signature')
             
             # SignedInfo
@@ -481,24 +498,27 @@ class CryptoSigner:
         cac_ns = '{urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2}'
         cbc_ns = '{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}'
         
-        # Find or create AdditionalDocumentReference for QR
-        # Insert before AccountingSupplierParty
-        supplier_party = tree.find('.//cac:AccountingSupplierParty', namespaces)
-        
-        if supplier_party is not None:
+        # The QR lives in an AdditionalDocumentReference, which UBL requires to
+        # appear before cac:Signature (and AccountingSupplierParty). Anchor on
+        # cac:Signature when present so the QR ref keeps the schema-valid order.
+        anchor = tree.find('.//cac:Signature', namespaces)
+        if anchor is None:
+            anchor = tree.find('.//cac:AccountingSupplierParty', namespaces)
+
+        if anchor is not None:
             qr_ref = etree.Element(f'{cac_ns}AdditionalDocumentReference')
-            
+
             ref_id = etree.SubElement(qr_ref, f'{cbc_ns}ID')
             ref_id.text = "QR"
-            
+
             attachment = etree.SubElement(qr_ref, f'{cac_ns}Attachment')
             embedded_doc = etree.SubElement(attachment, f'{cbc_ns}EmbeddedDocumentBinaryObject')
             embedded_doc.set('mimeCode', 'text/plain')
             embedded_doc.text = qr_data
-            
-            # Insert before supplier party
-            supplier_index = list(tree).index(supplier_party)
-            tree.insert(supplier_index, qr_ref)
+
+            # Insert immediately before the anchor element.
+            anchor_index = list(tree).index(anchor)
+            tree.insert(anchor_index, qr_ref)
         
         # Convert back to bytes
         qr_xml_bytes = etree.tostring(

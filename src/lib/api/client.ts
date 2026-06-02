@@ -48,6 +48,25 @@ export function isRealZatcaEndpoint(endpoint: string): boolean {
 export const demoDelay = (ms = 450) =>
     new Promise<void>((r) => setTimeout(r, ms + Math.random() * 250));
 
+/**
+ * Coerce a FastAPI `detail` (which may be a string, an error envelope object,
+ * or absent) into a single display string. Prefers a `message` field when the
+ * detail is an object so the user sees the backend's human-readable reason.
+ */
+function normalizeDetail(detail: unknown): string {
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail === 'object') {
+        const msg = (detail as { message?: unknown }).message;
+        if (typeof msg === 'string' && msg) return msg;
+        try {
+            return JSON.stringify(detail);
+        } catch {
+            // Fall through to the generic message.
+        }
+    }
+    return 'An error occurred';
+}
+
 // Types
 export interface ApiError {
     detail: string;
@@ -139,7 +158,13 @@ class ApiClient {
                 return {
                     data: null,
                     error: {
-                        detail: data.detail || 'An error occurred',
+                        // FastAPI may set `detail` to a structured object (e.g. the
+                        // submit-to-zatca 502/500 envelope: {success, request_id,
+                        // timestamp, attempted_url, message}). ApiError.detail is a
+                        // string, and callers render it directly, so coerce here —
+                        // prefer the human-readable `message` — to avoid React's
+                        // "Objects are not valid as a React child" crash.
+                        detail: normalizeDetail(data?.detail),
                         status: response.status,
                     },
                     success: false,

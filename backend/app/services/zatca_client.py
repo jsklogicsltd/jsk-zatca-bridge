@@ -11,6 +11,26 @@ class ZatcaAPIError(Exception):
     pass
 
 
+# Credential values that ship in .env / .env.example as local scaffolding.
+# They can never authenticate against ZATCA, so we treat them as "not
+# configured": submissions then return the graceful would-submit preview
+# (status credentials_missing) instead of attempting a real call that 401s.
+_PLACEHOLDER_CREDENTIALS = {
+    "sandbox-csid",
+    "sandbox-key",
+    "your-csid-here",
+    "your-api-key-here",
+    "your-csid",
+    "your-secret",
+    "changeme",
+}
+
+
+def _is_placeholder_credential(value: Optional[str]) -> bool:
+    v = (value or "").strip().lower()
+    return v == "" or v in _PLACEHOLDER_CREDENTIALS
+
+
 class ZatcaClient:
     """
     Async client for ZATCA Fatoora Portal API.
@@ -79,9 +99,28 @@ class ZatcaClient:
             "Authorization": f"Basic {encoded}"
         }
 
+    def _api_headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """
+        Standard request headers for ZATCA invoice APIs (compliance, reporting,
+        clearance). ZATCA rejects requests that omit ``Accept-Version: V2`` with
+        "This Version is not supported or not provided in the header", so every
+        submission call must include it alongside Basic auth. ``extra`` carries
+        per-endpoint headers (e.g. ``Clearance-Status`` for clearance).
+        """
+        headers = {
+            "Accept-Version": "V2",
+            "Accept": "application/json",
+            "Accept-Language": "en",
+            "Content-Type": "application/json",
+            **self._create_auth_header(),
+        }
+        if extra:
+            headers.update(extra)
+        return headers
+
     def has_credentials(self) -> bool:
-        """Return True if both CSID and secret are configured."""
-        return bool(self.csid) and bool(self.secret)
+        """Return True if real CSID + secret are configured (placeholders don't count)."""
+        return not _is_placeholder_credential(self.csid) and not _is_placeholder_credential(self.secret)
 
     def build_url(self, endpoint: str) -> str:
         """Compose the full URL the client would POST to for an action."""
@@ -267,7 +306,7 @@ class ZatcaClient:
             response = await self.client.post(
                 endpoint,
                 json=payload,
-                headers=self._create_auth_header()
+                headers=self._api_headers()
             )
 
             response.raise_for_status()
@@ -323,7 +362,7 @@ class ZatcaClient:
             response = await self.client.post(
                 endpoint,
                 json=payload,
-                headers=self._create_auth_header()
+                headers=self._api_headers()
             )
 
             response.raise_for_status()
@@ -384,7 +423,9 @@ class ZatcaClient:
             response = await self.client.post(
                 endpoint,
                 json=payload,
-                headers=self._create_auth_header()
+                # Clearance requires the taxpayer's clearance flag in addition
+                # to the standard Accept-Version/auth headers.
+                headers=self._api_headers({"Clearance-Status": "1"})
             )
 
             response.raise_for_status()

@@ -50,3 +50,6 @@ htmlcov/
 
 # Logs
 *.log
+
+# Generated ZATCA SDK working dir (extracted from the jar at runtime)
+.zatca_sdk_home/

@@ -115,15 +115,27 @@ export interface ValidatorInfo {
     status: string;
 }
 
+export interface KnownIssue {
+    code: string;
+    explanation: string;
+}
+
 export interface XMLValidationResult {
     valid: boolean;
     return_code: number;
     errors: string[];
     warnings: string[];
     info: string[];
+    known_issues?: KnownIssue[];
     stdout: string;
     stderr: string;
     summary: string;
+}
+
+export interface SampleInvoice {
+    invoice_number: string;
+    invoice_type: string;
+    xml: string;
 }
 
 // ============ API Functions ============
@@ -229,4 +241,12 @@ export async function validateXmlWithSdk(
  */
 export async function getValidatorInfo(): Promise<ApiResponse<ValidatorInfo>> {
     return apiClient.get<ValidatorInfo>('/debug/validator-info');
+}
+
+/**
+ * Fetch a freshly generated, fully ZATCA-compliant signed sample invoice
+ * (passes XSD/EN16931/KSA/PIH) for demoing the validator end-to-end.
+ */
+export async function fetchSampleInvoice(): Promise<ApiResponse<SampleInvoice>> {
+    return apiClient.get<SampleInvoice>('/debug/sample-invoice');
 }

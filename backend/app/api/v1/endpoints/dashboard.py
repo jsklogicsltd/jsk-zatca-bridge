@@ -150,32 +150,32 @@ async def get_dashboard_stats(
     if end_date:
         filters.append(Invoice.created_at <= datetime.combine(end_date, datetime.max.time()))
     
-    # Total invoices count
-    count_query = select(func.count()).select_from(Invoice)
+    # Total invoices count + revenue/VAT sums in a single aggregate query.
+    # Rows with NULL totals (pre-rewrite history) contribute 0 to the sums.
+    agg_query = select(
+        func.count(Invoice.id),
+        func.coalesce(func.sum(Invoice.total), 0),
+        func.coalesce(func.sum(Invoice.tax_amount), 0),
+    )
     if filters:
-        count_query = count_query.where(and_(*filters))
-    
-    total_result = await db.execute(count_query)
-    total_invoices = total_result.scalar() or 0
-    
-    # Revenue and VAT would normally be calculated from invoice amounts
-    # For now, returning placeholder values since we don't have amount fields in the model
-    # In production, you'd add these fields to the Invoice model
-    
+        agg_query = agg_query.where(and_(*filters))
+
+    total_invoices, total_revenue, total_vat = (await db.execute(agg_query)).one()
+
     # Status counts
     status_counts = {}
     for status in InvoiceStatus:
         status_query = select(func.count()).select_from(Invoice).where(Invoice.status == status)
         if filters:
             status_query = status_query.where(and_(*filters))
-        
+
         result = await db.execute(status_query)
         status_counts[status.value] = result.scalar() or 0
-    
+
     return DashboardStats(
-        total_invoices=total_invoices,
-        total_revenue=0.0,  # TODO: Calculate from invoice amounts
-        total_vat=0.0,  # TODO: Calculate from invoice amounts
+        total_invoices=total_invoices or 0,
+        total_revenue=float(total_revenue or 0),
+        total_vat=float(total_vat or 0),
         cleared_count=status_counts.get("CLEARED", 0),
         reported_count=status_counts.get("REPORTED", 0),
         rejected_count=status_counts.get("REJECTED", 0),

@@ -37,10 +37,20 @@ class Party(BaseModel):
     name: str = Field(..., min_length=1, max_length=127)
     street: str = Field(..., min_length=1, max_length=127)
     building_number: str = Field(..., pattern=r'^\d{4}$')
+    # ZATCA KSA-23/KSA-19 "additional number" (UBL PlotIdentification): a
+    # mandatory 4-digit secondary address number distinct from the building
+    # number (BR-KSA-64/65). Defaults to the building number when the source
+    # ERP doesn't carry a separate value.
+    additional_number: Optional[str] = Field(default=None, pattern=r'^\d{4}$')
     city: str = Field(..., min_length=1, max_length=127)
     district: str = Field(..., min_length=1, max_length=127)
     postal_code: str = Field(..., pattern=r'^\d{5}$')
     country_code: str = Field(default="SA", pattern=r'^[A-Z]{2}$')
+
+    @property
+    def plot_identification(self) -> str:
+        """KSA-23 additional number, falling back to the building number."""
+        return self.additional_number or self.building_number
     
     @field_validator('trn')
     @classmethod

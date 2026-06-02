@@ -1,15 +1,35 @@
 """
 ZATCA SDK Validator Wrapper.
-Provides Python interface to the official ZATCA CLI validator (Java-based).
+Provides a Python interface to the official ZATCA CLI validator (Java-based).
+
+The ZATCA SDK (cli-3.0.8-jar-with-dependencies.jar) does NOT validate when
+simply invoked as `java -jar cli.jar -invoice <file>` — that only prints the
+usage banner and exits 0. Real validation requires:
+
+  1. The `-validate` flag.
+  2. An `SDK_CONFIG` environment variable pointing at a JSON config file that
+     maps the SDK's resource paths (XSD, schematrons, certificate, PIH, …) to
+     real files on disk. Without it the SDK does `Paths.get(System.getenv(
+     "SDK_CONFIG"))`, which throws an NPE surfaced as "failed to validate
+     invoice - null".
+  3. Parsing the verdict from the SDK's "GLOBAL VALIDATION RESULT = PASSED/
+     FAILED" log line — the process exit code is always 0 regardless of outcome.
+
+The required resources (xsds/, schematrons/, cert/, PrivateKey.pem) are bundled
+inside the jar. On first use we extract them into a stable SDK "home" directory
+next to the jar and generate the config there.
 """
 
-import subprocess
+import base64
+import hashlib
 import os
-import tempfile
-from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
-import json
 import re
+import subprocess
+import tempfile
+import json
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 class ZATCAValidatorError(Exception):
@@ -17,48 +37,60 @@ class ZATCAValidatorError(Exception):
     pass
 
 
+# Resource entries (prefixes / exact names) to extract from the jar into the
+# SDK home so the validator's filesystem paths resolve.
+_JAR_RESOURCE_PREFIXES = ("xsds/", "schematrons/", "cert/")
+_JAR_RESOURCE_FILES = ("PrivateKey.pem",)
+
+
+# Known defects in the bundled 20210718 schematron that fire against otherwise
+# fully-compliant invoices. We report them faithfully (the SDK still FAILS the
+# invoice) but annotate the cause so consumers aren't misled. The transaction
+# code is intentionally left honest rather than tweaked to silence these.
+_KNOWN_SCHEMATRON_FALSE_POSITIVES = {
+    "BR-KSA-31": (
+        "Known false-positive in the bundled 20210718 schematron: the rule's "
+        "own message says only third-party/nominal/summary flags are *allowed* "
+        "for simplified invoices, but the XSL erroneously *requires* "
+        "InvoiceTypeCode @name positions 3, 4 and 6 to all equal '1'. A correct "
+        "plain simplified invoice (name='0200000') cannot satisfy it. ZATCA "
+        "corrected this in later schematron releases."
+    ),
+}
+
+
 class ZATCAValidator:
-    """
-    Wrapper for ZATCA SDK CLI validator (Java-based).
-    
-    The ZATCA SDK provides official validation for e-invoices to ensure
-    compliance with Saudi Arabia's ZATCA requirements.
-    """
-    
-    def __init__(self, jar_path: Optional[str] = None):
+    """Wrapper for the official ZATCA SDK CLI validator (Java-based)."""
+
+    def __init__(self, jar_path: Optional[str] = None, sdk_home: Optional[str] = None):
         """
-        Initialize ZATCA validator.
-        
         Args:
-            jar_path: Path to the ZATCA CLI jar file.
-                     Defaults to cli-3.0.8-jar-with-dependencies.jar in backend directory.
+            jar_path: Path to the ZATCA CLI jar. Defaults to
+                cli-3.0.8-jar-with-dependencies.jar in the backend directory.
+            sdk_home: Directory to hold the extracted SDK resources + config.
+                Defaults to ``.zatca_sdk_home`` next to the jar.
         """
         if jar_path is None:
-            # Default to jar file in backend directory
-            # Get the backend directory (3 levels up from services)
-            current_file = Path(__file__)  # app/services/zatca_validator.py
-            backend_dir = current_file.parent.parent.parent  # Go up to backend/
+            backend_dir = Path(__file__).parent.parent.parent  # backend/
             jar_path = backend_dir / "cli-3.0.8-jar-with-dependencies.jar"
-        
+
         self.jar_path = Path(jar_path)
-        
-        # Verify jar file exists
         if not self.jar_path.exists():
-            raise FileNotFoundError(
-                f"ZATCA CLI jar file not found at: {self.jar_path}"
-            )
-        
-        # Verify Java is installed
+            raise FileNotFoundError(f"ZATCA CLI jar file not found at: {self.jar_path}")
+
+        self.sdk_home = Path(sdk_home) if sdk_home else self.jar_path.parent / ".zatca_sdk_home"
+        self.config_path = self.sdk_home / "config.json"
+
         self._verify_java()
-    
-    def _verify_java(self):
+        self._ensure_sdk_home()
+
+    # ------------------------------------------------------------------ setup
+
+    def _verify_java(self) -> None:
         """Verify Java is installed and accessible."""
         try:
             result = subprocess.run(
-                ["java", "-version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["java", "-version"], capture_output=True, text=True, timeout=10
             )
             if result.returncode != 0:
                 raise ZATCAValidatorError("Java is not properly installed")
@@ -68,322 +100,229 @@ class ZATCAValidator:
             )
         except subprocess.TimeoutExpired:
             raise ZATCAValidatorError("Java command timed out")
-    
+
+    def _ensure_sdk_home(self) -> None:
+        """
+        Extract bundled SDK resources and write the config file. Idempotent:
+        rebuilds only when the config is missing or older than the jar.
+        """
+        fresh = (
+            self.config_path.exists()
+            and self.config_path.stat().st_mtime >= self.jar_path.stat().st_mtime
+        )
+        if fresh:
+            return
+
+        self.sdk_home.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(self.jar_path) as jar:
+            for name in jar.namelist():
+                if name.endswith("/"):
+                    continue
+                if name.startswith(_JAR_RESOURCE_PREFIXES) or name in _JAR_RESOURCE_FILES:
+                    target = self.sdk_home / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with jar.open(name) as src, open(target, "wb") as dst:
+                        dst.write(src.read())
+
+        # Working dirs + the previous-invoice-hash file. For a standalone
+        # validation the default first-invoice PIH is base64(SHA256("0")).
+        (self.sdk_home / "input").mkdir(exist_ok=True)
+        (self.sdk_home / "output").mkdir(exist_ok=True)
+        pih_path = self.sdk_home / "input" / "pih.txt"
+        # First-invoice PIH: base64 of the SHA-256 *hex digest string* of "0"
+        # (matches InvoiceXMLBuilder.DEFAULT_PIH and the schematron's pinned
+        # value). Using the raw 32 digest bytes here makes the SDK's PIH stage
+        # report "KSA-13 PIH is inValid" against a schematron-valid invoice.
+        default_pih = base64.b64encode(
+            hashlib.sha256(b"0").hexdigest().encode("ascii")
+        ).decode("ascii")
+        pih_path.write_text(default_pih)
+
+        config = {
+            "xsdPath": str(self.sdk_home / "xsds/UBL2.1/xsd/maindoc/UBL-Invoice-2.1.xsd"),
+            "enSchematron": str(self.sdk_home / "schematrons/CEN-EN16931-UBL.xsl"),
+            "zatcaSchematron": str(
+                self.sdk_home / "schematrons/20210718_ZATCA_E-invoice_Validation_Rules.xsl"
+            ),
+            "certPath": str(self.sdk_home / "cert/certificate.cer"),
+            "pihPath": str(pih_path),
+            "certPassword": "123456",
+            "privateKeyPath": str(self.sdk_home / "PrivateKey.pem"),
+            "inputPath": str(self.sdk_home / "input"),
+            "outputPath": str(self.sdk_home / "output"),
+            "usagePathFile": str(self.sdk_home / "usage.json"),
+        }
+        self.config_path.write_text(json.dumps(config, indent=2))
+
+    # -------------------------------------------------------------- validate
+
     def validate_xml_file(self, xml_file_path: str) -> Dict[str, Any]:
-        """
-        Validate an invoice XML file using ZATCA SDK.
-        
-        Args:
-            xml_file_path: Path to the XML file to validate
-            
-        Returns:
-            Dictionary containing validation results:
-            {
-                "valid": bool,
-                "stdout": str,
-                "stderr": str,
-                "errors": List[str],
-                "warnings": List[str],
-                "return_code": int
-            }
-            
-        Raises:
-            ZATCAValidatorError: If validation process fails
-        """
+        """Validate an invoice XML file using the ZATCA SDK."""
         xml_path = Path(xml_file_path)
-        
         if not xml_path.exists():
             raise FileNotFoundError(f"XML file not found: {xml_file_path}")
-        
-        # Build command
+
         command = [
-            "java",
-            "-jar",
-            str(self.jar_path),
-            "-invoice",
-            str(xml_path)
+            "java", "-jar", str(self.jar_path),
+            "-validate",
+            "-invoice", str(xml_path),
         ]
-        
+        env = {**os.environ, "SDK_CONFIG": str(self.config_path)}
+
         try:
-            # Run ZATCA validator
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=30,
-                cwd=self.jar_path.parent
+                timeout=60,
+                cwd=str(self.sdk_home),
+                env=env,
             )
-            
-            # Parse output
-            return self._parse_validation_output(
-                result.stdout,
-                result.stderr,
-                result.returncode
-            )
-            
         except subprocess.TimeoutExpired:
-            raise ZATCAValidatorError("ZATCA validation timed out (30s)")
+            raise ZATCAValidatorError("ZATCA validation timed out (60s)")
         except Exception as e:
             raise ZATCAValidatorError(f"Validation failed: {str(e)}")
-    
+
+        return self._parse_validation_output(result.stdout, result.stderr, result.returncode)
+
     def validate_xml_string(self, xml_content: str) -> Dict[str, Any]:
-        """
-        Validate an invoice XML string using ZATCA SDK.
-        
-        Creates a temporary file for the XML content, validates it,
-        and cleans up the temporary file.
-        
-        Args:
-            xml_content: XML content as string
-            
-        Returns:
-            Dictionary containing validation results (same as validate_xml_file)
-        """
-        # Create temporary file for XML content
+        """Validate an invoice XML string (written to a temp file first)."""
         with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.xml',
-            delete=False,
-            encoding='utf-8'
+            mode="w", suffix=".xml", delete=False, encoding="utf-8"
         ) as temp_file:
             temp_file.write(xml_content)
             temp_path = temp_file.name
-        
         try:
-            # Validate the temporary file
-            result = self.validate_xml_file(temp_path)
-            return result
+            return self.validate_xml_file(temp_path)
         finally:
-            # Clean up temporary file
             try:
                 os.unlink(temp_path)
-            except:
+            except OSError:
                 pass
-    
+
+    # ---------------------------------------------------------------- parse
+
     def _parse_validation_output(
-        self,
-        stdout: str,
-        stderr: str,
-        return_code: int
+        self, stdout: str, stderr: str, return_code: int
     ) -> Dict[str, Any]:
         """
-        Parse ZATCA validator output.
-        
-        Args:
-            stdout: Standard output from validator
-            stderr: Standard error from validator
-            return_code: Process return code
-            
-        Returns:
-            Parsed validation results
+        Parse the SDK output. Validity comes from the SDK's own verdict line
+        (``GLOBAL VALIDATION RESULT = PASSED``), never the exit code, which is
+        always 0. If the SDK never emitted a verdict (e.g. it crashed before
+        validating), we treat that as invalid and surface the failure.
         """
-        # Initialize result structure
-        result = {
-            "valid": return_code == 0,
+        text = f"{stdout}\n{stderr}"
+
+        global_match = re.search(
+            r"GLOBAL VALIDATION RESULT\s*=\s*(PASSED|FAILED)", text, re.IGNORECASE
+        )
+        produced_verdict = global_match is not None
+        valid = bool(global_match) and global_match.group(1).upper() == "PASSED"
+
+        # Per-stage outcomes, e.g. "[XSD] validation result : FAILED".
+        stages = {
+            stage.upper(): outcome.upper()
+            for stage, outcome in re.findall(
+                r"\[(\w+)\]\s*validation result\s*:\s*(PASSED|FAILED)", text, re.IGNORECASE
+            )
+        }
+
+        errors = self._extract_errors(text)
+        warnings = self._extract_warnings(text)
+        info = [f"{k}: {v}" for k, v in stages.items()]
+
+        # Flag any reported errors that are known schematron-version defects so
+        # the verdict can be read in context (the SDK still fails the invoice).
+        known_issues = [
+            {"code": code, "explanation": note}
+            for code, note in _KNOWN_SCHEMATRON_FALSE_POSITIVES.items()
+            if any(f"[{code}]" in e for e in errors)
+        ]
+
+        if not produced_verdict:
+            # The SDK exited without validating — almost always a setup/NPE
+            # problem ("failed to validate invoice - null"). Make it loud
+            # rather than silently reporting PASS.
+            crash = re.search(r"failed to validate invoice\s*-\s*(.+)", text, re.IGNORECASE)
+            errors.append(
+                "ZATCA SDK did not produce a validation verdict"
+                + (f" ({crash.group(1).strip()})" if crash else "")
+                + ". The validator may be misconfigured."
+            )
+
+        summary = self._build_summary(
+            valid, produced_verdict, stages, errors, warnings, known_issues
+        )
+
+        return {
+            "valid": valid,
+            "return_code": return_code,
+            "errors": errors,
+            "warnings": warnings,
+            "info": info,
+            "stages": stages,
+            "known_issues": known_issues,
             "stdout": stdout,
             "stderr": stderr,
-            "return_code": return_code,
-            "errors": [],
-            "warnings": [],
-            "info": []
+            "summary": summary,
         }
-        
-        # Parse stdout for validation messages
-        if stdout:
-            result["errors"].extend(self._extract_messages(stdout, "ERROR"))
-            result["warnings"].extend(self._extract_messages(stdout, "WARNING"))
-            result["info"].extend(self._extract_messages(stdout, "INFO"))
-        
-        # Parse stderr for any error messages
-        if stderr:
-            result["errors"].extend(self._extract_messages(stderr, "ERROR"))
-        
-        # Determine overall validity
-        # Valid if return code is 0 and no errors found
-        result["valid"] = return_code == 0 and len(result["errors"]) == 0
-        
-        return result
-    
-    def _extract_messages(self, text: str, level: str) -> list:
-        """
-        Extract validation messages by level from output text.
-        
-        Args:
-            text: Output text to parse
-            level: Message level (ERROR, WARNING, INFO)
-            
-        Returns:
-            List of extracted messages
-        """
-        messages = []
-        
-        # Patterns to skip (SDK banner text, not real errors)
-        skip_patterns = [
-            "Welcome to ZATCA",
-            "E-Invoice Java SDK",
-            "This SDK uses Java",
-            "It can take a Standard",
-            "It returns if the validation",
-            "shows errors where the XML validation fails",
-            "s where the XML validation fails",  # Partial match
-            "It checks for syntax",
-            "MainApp -",  # Empty MainApp lines
-            "MainApp",  # Any MainApp reference
-            "********",
-            "jar)",
-            "passing it an invoice",
-            "successful or shows errors",
-        ]
-        
-        # Look for common patterns in ZATCA validator output
-        patterns = [
-            rf"{level}:?\s*(.+?)(?:\n|$)",
-            rf"\[{level}\]\s*(.+?)(?:\n|$)",
-            rf"{level}\s*-\s*(.+?)(?:\n|$)"
-        ]
-        
-        for pattern in patterns:
-            matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
-            for match in matches:
-                message = match.group(1).strip()
-                
-                # Skip empty or banner messages
-                if not message or len(message) < 5:
-                    continue
-                    
-                # Skip SDK banner messages
-                should_skip = False
-                for skip in skip_patterns:
-                    if skip in message:
-                        should_skip = True
-                        break
-                
-                if should_skip:
-                    continue
-                    
-                if message not in messages:
-                    messages.append(message)
-        
-        return messages
-    
+
+    def _extract_errors(self, text: str) -> list:
+        """Pull the SDK's structured 'CODE : X, MESSAGE : Y' validation errors."""
+        errors = []
+        for code, message in re.findall(
+            r"CODE\s*:\s*([^,\n]+?)\s*,\s*MESSAGE\s*:\s*(.+?)(?:\n|$)", text
+        ):
+            entry = f"[{code.strip()}] {message.strip()}"
+            if entry not in errors:
+                errors.append(entry)
+        return errors
+
+    def _extract_warnings(self, text: str) -> list:
+        warnings = []
+        for message in re.findall(r"WARNING\s*:\s*(.+?)(?:\n|$)", text):
+            msg = message.strip()
+            if len(msg) >= 5 and msg not in warnings:
+                warnings.append(msg)
+        return warnings
+
+    def _build_summary(self, valid, produced_verdict, stages, errors, warnings, known_issues=None) -> str:
+        lines = []
+        if produced_verdict:
+            lines.append(f"Validation Result: {'✓ PASS' if valid else '✗ FAIL'}")
+        else:
+            lines.append("Validation Result: ✗ ERROR (no verdict produced)")
+        if stages:
+            lines.append("Stages: " + ", ".join(f"{k}={v}" for k, v in stages.items()))
+        if errors:
+            lines.append(f"\nErrors ({len(errors)}):")
+            for i, e in enumerate(errors[:10], 1):
+                lines.append(f"  {i}. {e}")
+            if len(errors) > 10:
+                lines.append(f"  ... and {len(errors) - 10} more")
+        if known_issues:
+            lines.append(f"\nKnown schematron-version false-positives ({len(known_issues)}):")
+            for issue in known_issues:
+                lines.append(f"  [{issue['code']}] {issue['explanation']}")
+        if warnings:
+            lines.append(f"\nWarnings ({len(warnings)}):")
+            for i, w in enumerate(warnings[:10], 1):
+                lines.append(f"  {i}. {w}")
+        return "\n".join(lines)
+
+    # ----------------------------------------------------------------- meta
+
     def get_validator_version(self) -> str:
-        """
-        Get ZATCA SDK validator version.
-        
-        Returns:
-            Version string
-        """
+        """Best-effort SDK version string."""
         try:
             result = subprocess.run(
-                ["java", "-jar", str(self.jar_path), "-version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["java", "-jar", str(self.jar_path), "-help"],
+                capture_output=True, text=True, timeout=10,
             )
-            
-            # Try to extract version from output
-            if "3.0.8" in result.stdout or "3.0.8" in result.stderr:
-                return "3.0.8"
-            
-            return result.stdout.strip() or "Unknown"
-            
+            blob = f"{result.stdout}{result.stderr}"
+            m = re.search(r"Java SDK\s+([\d.]+)", blob)
+            if m:
+                return m.group(1)
+            return "3.0.8"
         except Exception:
             return "Unknown"
-
-
-# Test function
-def test_zatca_validator():
-    """
-    Test function to verify ZATCA SDK validator works.
-    
-    Creates a minimal UBL 2.1 XML invoice and validates it.
-    """
-    print("=" * 60)
-    print("ZATCA Validator Test")
-    print("=" * 60)
-    
-    # Create a minimal test XML (may not pass ZATCA validation, but tests the wrapper)
-    test_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
-         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
-         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
-    <cbc:ID>TEST-001</cbc:ID>
-    <cbc:IssueDate>2026-01-29</cbc:IssueDate>
-    <cbc:InvoiceTypeCode name="0100000">388</cbc:InvoiceTypeCode>
-    <cbc:DocumentCurrencyCode>SAR</cbc:DocumentCurrencyCode>
-    <cac:AccountingSupplierParty>
-        <cac:Party>
-            <cac:PartyIdentification>
-                <cbc:ID schemeID="CRN">310122393500003</cbc:ID>
-            </cac:PartyIdentification>
-        </cac:Party>
-    </cac:AccountingSupplierParty>
-    <cac:LegalMonetaryTotal>
-        <cbc:PayableAmount currencyID="SAR">1000.00</cbc:PayableAmount>
-    </cac:LegalMonetaryTotal>
-</Invoice>"""
-    
-    try:
-        # Initialize validator
-        print("\n1. Initializing ZATCA validator...")
-        validator = ZATCAValidator()
-        print(f"   ✓ Validator initialized")
-        print(f"   JAR path: {validator.jar_path}")
-        
-        # Get version
-        print("\n2. Getting validator version...")
-        version = validator.get_validator_version()
-        print(f"   ✓ Version: {version}")
-        
-        # Validate test XML
-        print("\n3. Validating test XML...")
-        result = validator.validate_xml_string(test_xml)
-        
-        print(f"\n4. Validation Results:")
-        print(f"   Valid: {result['valid']}")
-        print(f"   Return Code: {result['return_code']}")
-        print(f"   Errors: {len(result['errors'])}")
-        print(f"   Warnings: {len(result['warnings'])}")
-        print(f"   Info: {len(result['info'])}")
-        
-        if result['errors']:
-            print(f"\n   Error Messages:")
-            for error in result['errors'][:5]:  # Show first 5 errors
-                print(f"   - {error}")
-        
-        if result['warnings']:
-            print(f"\n   Warning Messages:")
-            for warning in result['warnings'][:5]:  # Show first 5 warnings
-                print(f"   - {warning}")
-        
-        print(f"\n5. Raw Output:")
-        if result['stdout']:
-            print(f"\n   STDOUT:")
-            print("   " + "\n   ".join(result['stdout'].split('\n')[:10]))
-        
-        if result['stderr']:
-            print(f"\n   STDERR:")
-            print("   " + "\n   ".join(result['stderr'].split('\n')[:10]))
-        
-        print("\n" + "=" * 60)
-        print("✓ Test completed successfully!")
-        print("  ZATCA SDK validator wrapper is working.")
-        print("=" * 60)
-        
-        return result
-        
-    except ZATCAValidatorError as e:
-        print(f"\n✗ ZATCA Validator Error: {e}")
-        print("=" * 60)
-        return None
-    except Exception as e:
-        print(f"\n✗ Unexpected Error: {e}")
-        print("=" * 60)
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-if __name__ == "__main__":
-    # Run test when script is executed directly
-    test_zatca_validator()

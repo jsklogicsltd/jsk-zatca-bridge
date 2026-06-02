@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum as SQLEnum, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum as SQLEnum, JSON, Numeric
 from sqlalchemy.sql import func
 from datetime import datetime
 import enum
@@ -29,6 +29,13 @@ class Invoice(Base):
     uuid = Column(String(36), unique=True, index=True, nullable=False)
     invoice_number = Column(String(100), unique=True, index=True, nullable=False)
     
+    # Monetary totals (kept on the row so /stats can aggregate without
+    # re-parsing xml_content). Columns exist on the table from migration 001.
+    subtotal = Column(Numeric(12, 2), nullable=True)      # TaxExclusiveAmount
+    tax_amount = Column(Numeric(12, 2), nullable=True)    # TaxAmount (VAT)
+    total = Column(Numeric(12, 2), nullable=True)         # TaxInclusiveAmount
+    currency = Column(String(3), nullable=True)
+
     # Invoice data
     xml_content = Column(Text, nullable=True)  # Generated UBL 2.1 XML
     

@@ -29,6 +29,9 @@ class ValidateXMLResponse(BaseModel):
     errors: list
     warnings: list
     info: list
+    # Reported errors that are known defects of the bundled schematron version
+    # (e.g. BR-KSA-31), each as {"code", "explanation"}.
+    known_issues: list = []
     stdout: str
     stderr: str
     summary: str
@@ -86,15 +89,24 @@ async def validate_xml_with_sdk(request: ValidateXMLRequest):
             summary_lines.append(f"\nInfo ({len(result['info'])}):")
             for i, info in enumerate(result['info'][:5], 1):
                 summary_lines.append(f"  {i}. {info}")
-        
+
+        known_issues = result.get('known_issues', [])
+        if known_issues:
+            summary_lines.append(
+                f"\nKnown schematron-version false-positives ({len(known_issues)}):"
+            )
+            for issue in known_issues:
+                summary_lines.append(f"  [{issue['code']}] {issue['explanation']}")
+
         summary = "\n".join(summary_lines)
-        
+
         return ValidateXMLResponse(
             valid=result['valid'],
             return_code=result['return_code'],
             errors=result['errors'],
             warnings=result['warnings'],
             info=result['info'],
+            known_issues=known_issues,
             stdout=result['stdout'],
             stderr=result['stderr'],
             summary=summary
@@ -110,6 +122,61 @@ async def validate_xml_with_sdk(request: ValidateXMLRequest):
             status_code=500,
             detail=f"Unexpected error during validation: {str(e)}"
         )
+
+
+@router.get("/sample-invoice")
+async def sample_invoice():
+    """
+    Return a freshly generated, fully ZATCA-compliant SIGNED standard tax
+    invoice as an XML string. No database required — handy for demoing the
+    validator end-to-end (passes XSD, EN16931, KSA business rules and PIH).
+    """
+    import datetime
+    from decimal import Decimal
+    from app.schemas.validation import InvoiceCreate
+    from app.services.xml_builder import InvoiceXMLBuilder
+    from app.services.crypto_signer import CryptoSigner
+
+    invoice = InvoiceCreate(
+        invoice_type="Tax",
+        invoice_number="INV-SAMPLE-001",
+        issue_date=datetime.date.today(),
+        supplier=dict(
+            trn="300000000000003", name="JSK Logics Trading Est.",
+            street="King Fahd Road", building_number="1234", additional_number="5678",
+            city="Riyadh", district="Al Olaya", postal_code="12211", country_code="SA",
+        ),
+        customer=dict(
+            trn="300000000000003", name="Acme Buyer Co.",
+            street="Olaya Street", building_number="4321", additional_number="8765",
+            city="Riyadh", district="Al Malaz", postal_code="12222", country_code="SA",
+        ),
+        line_items=[dict(
+            name="Consulting Services", quantity=Decimal("2"), price=Decimal("100"),
+            vat_rate=Decimal("15"), tax_code="S",
+        )],
+        currency_code="SAR",
+    )
+
+    builder = InvoiceXMLBuilder(invoice)
+    xml_bytes = builder.build()
+    signer = CryptoSigner()
+    _, public_key_pem = signer.generate_key_pair()
+    hash_b64, signature_b64, signed_xml = signer.sign_invoice_xml(xml_bytes)
+    timestamp = f"{invoice.issue_date.isoformat()}T00:00:00Z"
+    qr = signer.generate_tlv_qr(
+        seller_name=invoice.supplier.name, vat_number=invoice.supplier.trn,
+        timestamp=timestamp, invoice_total=str(invoice.calculated_total_including_vat),
+        vat_total=str(invoice.calculated_total_vat), xml_hash=hash_b64,
+        signature=signature_b64, public_key=public_key_pem,
+    )
+    final_xml = signer.insert_qr_code_into_xml(signed_xml, qr)
+
+    return {
+        "invoice_number": invoice.invoice_number,
+        "invoice_type": "Tax",
+        "xml": final_xml.decode("utf-8"),
+    }
 
 
 @router.get("/validator-info")
